@@ -7,7 +7,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy import Float, Integer, String, DateTime
 
 # 1. Database Connection Configuration (SQLAlchemy Async Driver)
-DATABASE_URL = "mysql+aiomysql://root:YOUR_PASSWORD@localhost:3306/portsync_twin"
+DATABASE_URL = "mysql+aiomysql://root:@localhost:3306/portsync_twin"
 
 engine = create_async_engine(DATABASE_URL, echo=True, future=True)
 AsyncSessionLocal = async_sessionmaker(
