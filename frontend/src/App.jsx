@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import YardMatrix from './YardMatrix';
 import CommandMap from './CommandMap';
+import SimulationLab from './SimulationLab';
+import AnalyticsInsights from './AnalyticsInsights';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('commandMap');
@@ -228,14 +230,14 @@ export default function App() {
         )}
 
         {activeTab === 'simulationLab' && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', textAlign: 'center' }}>
-            <h2>Simulation Lab</h2>
-            <p>Predictive port congestion simulation models are loading...</p>
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+            <SimulationLab />
           </div>
         )}
 
         {activeTab === 'analytics' && (
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', color: '#64748b', textAlign: 'center' }}>
+            <AnalyticsInsights />
             <h2>Analytics &amp; Insights</h2>
             <p>Terminal efficiency metrics and throughput analytics pipeline.</p>
           </div>

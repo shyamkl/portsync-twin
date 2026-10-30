@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -31,63 +31,113 @@ const vesselIcon = createCustomIcon('#00f0ff');  // Neon Cyan
 const trainIcon = createCustomIcon('#ff0055');   // Cyber Pink/Red
 const truckIcon = createCustomIcon('#39ff14');   // Neon Green
 
+const getIconForType = (type) => {
+  if (!type) return vesselIcon;
+  const lower = type.toLowerCase();
+  if (lower.includes('train') || lower.includes('dfc')) return trainIcon;
+  if (lower.includes('truck') || lower.includes('haulage')) return truckIcon;
+  return vesselIcon;
+};
+
 export default function CommandMap() {
   // Center: JNPT Port Coordinates
   const jnptCoords = [18.9500, 72.9500];
 
-  // Mock telemetry state holding live moving asset data
-  const [assets] = useState([
+  // State to hold live assets and connection/fallback status
+  const [assets, setAssets] = useState([]);
+  const [isLive, setIsLive] = useState(false);
+
+  // Fallback mock telemetry data in case backend is offline
+  const fallbackAssets = [
     {
       id: 'vessel-01',
-      name: 'MV EverGlory',
+      name: 'MV EverGlory (Offline Fallback)',
       type: 'Container Vessel',
-      coordinates: [18.9580, 72.9350],
-      icon: vesselIcon,
-      status: 'Anchored',
+      latitude: 18.9580,
+      longitude: 72.9350,
+      status: 'Anchored (Cached)',
+      speed: 0.0,
       cargo: '4200 TEU',
-      ldbReference: 'LDB-VES-2026-8821',
-      vahanApi: 'N/A (Maritime)',
-      speed: '0.0 knots',
-      heading: '210°',
-      lastUpdate: '10s ago',
+      timestamp: new Date().toISOString(),
     },
     {
       id: 'train-01',
-      name: 'Intermodal DFC Freight Train',
-      type: 'Freight Train (Dedicated Freight Corridor)',
-      coordinates: [18.9650, 72.9700],
-      icon: trainIcon,
-      status: 'In Transit',
-      speed: '65 km/h',
-      cargo: '90 FEU High-Cube Containers',
-      ldbReference: 'LDB-DFC-9904-X',
-      vahanApi: 'IR-DFC-882193',
-      heading: '280° (Approaching JNPT Yard)',
-      lastUpdate: 'Real-Time Telemetry',
+      name: 'Intermodal DFC Freight Train (Offline Fallback)',
+      type: 'Freight Train',
+      latitude: 18.9650,
+      longitude: 72.9700,
+      status: 'In Transit (Cached)',
+      speed: 65.0,
+      cargo: '90 FEU High-Cube',
+      timestamp: new Date().toISOString(),
     },
     {
       id: 'truck-01',
-      name: 'Logistics Haulage Truck',
-      type: 'Heavy Transport Vehicle (Tractor-Trailer)',
-      coordinates: [18.9380, 72.9620],
-      icon: truckIcon,
-      status: 'Gate Queue Processing',
-      speed: '5 km/h',
-      cargo: '1 x 40ft ISO Tank Container',
-      ldbReference: 'LDB-TRK-7712-B',
-      vahanApi: 'MH-04-FK-9102 (Valid Permit)',
-      queuePosition: '#4 in line (Gate 3)',
-      lastUpdate: '2s ago',
+      name: 'Logistics Haulage Truck (Offline Fallback)',
+      type: 'Haulage Truck',
+      latitude: 18.9380,
+      longitude: 72.9620,
+      status: 'Gate Queue (Cached)',
+      speed: 5.0,
+      cargo: '1 x 40ft ISO Tank',
+      timestamp: new Date().toISOString(),
     },
-  ]);
+  ];
+
+  useEffect(() => {
+    const fetchTelemetry = async () => {
+      try {
+        const response = await fetch('http://127.0.0');
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        // Expecting data to be an array of asset records from FastAPI
+        if (Array.isArray(data)) {
+          setAssets(data);
+          setIsLive(true);
+        } else {
+          throw new Error('Invalid telemetry payload format');
+        }
+      } catch (error) {
+        console.warn('FastAPI telemetry unreachable. Engaging safety fallback assets:', error.message);
+        setAssets(fallbackAssets);
+        setIsLive(false);
+      }
+    };
+
+    // Initial fetch on mount
+    fetchTelemetry();
+
+    // Setup 4-second continuous polling cycle
+    const intervalId = setInterval(fetchTelemetry, 4000);
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(intervalId);
+  }, []);
 
   return (
     <div style={styles.container}>
+      {/* Telemetry Status Banner */}
+      <div style={styles.statusBar}>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ 
+            width: 8, 
+            height: 8, 
+            borderRadius: '50%', 
+            backgroundColor: isLive ? '#22c55e' : '#ef4444',
+            display: 'inline-block',
+            boxShadow: isLive ? '0 0 8px #22c55e' : '0 0 8px #ef4444'
+          }}></span>
+          {isLive ? 'FastAPI Telemetry Stream: Connected (Live)' : 'FastAPI Stream Offline - Running Safe Fallback State'}
+        </span>
+      </div>
+
       {/* Dark mode Leaflet Map Container */}
       <MapContainer
         center={jnptCoords}
         zoom={13}
-        style={{ height: '100%', width: '100%', backgroundColor: '#0b0f19' }}
+        style={{ height: 'calc(100% - 32px)', width: '100%', backgroundColor: '#0b0f19' }}
         zoomControl={true}
       >
         <TileLayer
@@ -95,53 +145,51 @@ export default function CommandMap() {
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
-        {assets.map((asset) => (
-          <Marker key={asset.id} position={asset.coordinates} icon={asset.icon}>
-            <Popup className="cyber-popup">
-              <div style={styles.popupContent}>
-                <div style={styles.popupHeader}>
-                  <h4 style={styles.title}>{asset.name}</h4>
-                  <span style={styles.badge}>{asset.status}</span>
-                </div>
-                <div style={styles.grid}>
-                  <div style={styles.row}>
-                    <span style={styles.label}>Type:</span>
-                    <span style={styles.value}>{asset.type}</span>
+        {assets.map((asset) => {
+          // Safety guard for coordinate keys (supporting both [lat, lng] arrays or object properties)
+          const lat = asset.latitude ?? (asset.coordinates ? asset.coordinates[0] : jnptCoords[0]);
+          const lng = asset.longitude ?? (asset.coordinates ? asset.coordinates[1] : jnptCoords[1]);
+          const position = [lat, lng];
+          const markerIcon = getIconForType(asset.type);
+
+          return (
+            <Marker key={asset.id || asset.name} position={position} icon={markerIcon}>
+              <Popup className="cyber-popup">
+                <div style={styles.popupContent}>
+                  <div style={styles.popupHeader}>
+                    <h4 style={styles.title}>{asset.name || 'Unnamed Asset'}</h4>
+                    <span style={styles.badge}>{asset.status || 'Active'}</span>
                   </div>
-                  <div style={styles.row}>
-                    <span style={styles.label}>Cargo Payload:</span>
-                    <span style={styles.value}>{asset.cargo}</span>
-                  </div>
-                  {asset.speed && (
+                  <div style={styles.grid}>
                     <div style={styles.row}>
-                      <span style={styles.label}>Current Speed:</span>
-                      <span style={styles.value}>{asset.speed}</span>
+                      <span style={styles.label}>Asset Type:</span>
+                      <span style={styles.value}>{asset.type || 'Standard Unit'}</span>
                     </div>
-                  )}
-                  {asset.queuePosition && (
                     <div style={styles.row}>
-                      <span style={styles.label}>Queue Status:</span>
-                      <span style={styles.value}>{asset.queuePosition}</span>
+                      <span style={styles.label}>Cargo Load:</span>
+                      <span style={styles.value}>{asset.cargo || 'Standard TEU'}</span>
                     </div>
-                  )}
-                  <hr style={styles.divider} />
-                  <div style={styles.row}>
-                    <span style={styles.label}>LDB Ref ID:</span>
-                    <span style={styles.highlight}>{asset.ldbReference}</span>
-                  </div>
-                  <div style={styles.row}>
-                    <span style={styles.label}>Vahan / Transit Ref:</span>
-                    <span style={styles.highlight}>{asset.vahanApi}</span>
-                  </div>
-                  <div style={styles.row}>
-                    <span style={styles.label}>Telemetry Sync:</span>
-                    <span style={{ ...styles.value, color: '#39ff14' }}>{asset.lastUpdate}</span>
+                    <div style={styles.row}>
+                      <span style={styles.label}>Speed:</span>
+                      <span style={styles.value}>{asset.speed !== undefined ? `${asset.speed} km/h` : '0.0 km/h'}</span>
+                    </div>
+                    <div style={styles.row}>
+                      <span style={styles.label}>Coordinates:</span>
+                      <span style={styles.highlight}>{Number(lat).toFixed(4)}, {Number(lng).toFixed(4)}</span>
+                    </div>
+                    <hr style={styles.divider} />
+                    <div style={styles.row}>
+                      <span style={styles.label}>Server Timestamp:</span>
+                      <span style={{ ...styles.value, color: '#39ff14', fontSize: '10px' }}>
+                        {asset.timestamp ? new Date(asset.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString()}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </Popup>
-          </Marker>
-        ))}
+              </Popup>
+            </Marker>
+          );
+        })}
       </MapContainer>
 
       {/* Embedded CSS styling for Popup Dark-Mode Overrides */}
@@ -177,6 +225,18 @@ const styles = {
     minHeight: '100vh',
     backgroundColor: '#0b0f19',
     overflow: 'hidden',
+  },
+  statusBar: {
+    height: '32px',
+    backgroundColor: '#090d16',
+    borderBottom: '1px solid #1e293b',
+    display: 'flex',
+    alignItems: 'center',
+    padding: '0 16px',
+    fontSize: '0.75rem',
+    color: '#94a3b8',
+    flexShrink: 0,
+    justifyContent: 'space-between',
   },
   popupContent: {
     minWidth: '240px',
@@ -229,6 +289,7 @@ const styles = {
     color: '#38bdf8',
     fontFamily: 'monospace',
     fontWeight: 'bold',
+    fontSize: '11px',
   },
   divider: {
     borderColor: '#1e293b',
