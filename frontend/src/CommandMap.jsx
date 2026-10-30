@@ -87,7 +87,7 @@ export default function CommandMap() {
   useEffect(() => {
     const fetchTelemetry = async () => {
       try {
-        const response = await fetch('http://127.0.0');
+        const response = await fetch('http://127.0.0.1:8000/api/live-assets');
         if (!response.ok) {
           throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -95,7 +95,7 @@ export default function CommandMap() {
         // Expecting data to be an array of asset records from FastAPI
         if (Array.isArray(data)) {
           setAssets(data);
-          setIsLive(true);
+          setIsLive(true); // Switches status banner to green!
         } else {
           throw new Error('Invalid telemetry payload format');
         }
