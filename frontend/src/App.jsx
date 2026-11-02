@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import usePortSyncAlerts from './hooks/usePortSyncAlerts';
 import YardMatrix from './YardMatrix';
 import CommandMap from './CommandMap';
 import SimulationLab from './SimulationLab';
@@ -6,6 +7,96 @@ import AnalyticsInsights from './AnalyticsInsights';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('commandMap');
+  
+  // Real-time WebSocket Triage Notifications State & Connection Status
+  const [liveNotifications, setLiveNotifications] = useState([]);
+  const [wsConnected, setWsConnected] = useState(false);
+  
+  // Ref to hold WebSocket instance for safe cleanup and reconnect handling
+  const wsRef = useRef(null);
+  const reconnectTimerRef = useRef(null);
+
+  // Hook into teammate's alert hook for local component state sync
+  const { alerts } = usePortSyncAlerts();
+
+  // 1. Global Background WebSocket Connection Listener
+  useEffect(() => {
+    const connectWebSocket = () => {
+      try {
+        // Attempt primary endpoint path, fall back to default if needed
+        const wsUrl = "ws://localhost:8000/ws/alerts";
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws;
+
+        ws.onopen = () => {
+          setWsConnected(true);
+          if (reconnectTimerRef.current) {
+            clearTimeout(reconnectTimerRef.current);
+            reconnectTimerRef.current = null;
+          }
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const alertData = JSON.parse(event.data);
+            
+            // Format packet for UI Toast rendering
+            const notificationId = alertData.event_id || Date.now();
+            const newNotification = {
+              id: notificationId,
+              title: alertData.priority ? `[${alertData.priority}] REEFER ANOMALY` : "CRITICAL ALERT",
+              message: alertData.message || "Temperature disruption detected on reefer container.",
+              containerId: alertData.container_id || "UNKNOWN",
+              timestamp: alertData.timestamp || new Date().toISOString()
+            };
+
+            // 2. Append dynamically to liveNotifications state
+            setLiveNotifications((prev) => [newNotification, ...prev]);
+
+            // 3. Auto-dismiss Toast Alert after 5 seconds
+            setTimeout(() => {
+              setLiveNotifications((prev) => prev.filter((item) => item.id !== notificationId));
+            }, 5000);
+
+          } catch (err) {
+            console.error("Failed to parse incoming alert JSON packet:", err);
+          }
+        };
+
+        ws.onerror = (error) => {
+          setWsConnected(false);
+        };
+
+        ws.onclose = () => {
+          setWsConnected(false);
+          // 4. Safe Auto-Reconnect Logic after 3 seconds if backend disconnects or isn't ready
+          reconnectTimerRef.current = setTimeout(() => {
+            connectWebSocket();
+          }, 3000);
+        };
+      } catch (err) {
+        setWsConnected(false);
+        reconnectTimerRef.current = setTimeout(() => {
+          connectWebSocket();
+        }, 3000);
+      }
+    };
+
+    connectWebSocket();
+
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+      }
+    };
+  }, []);
+
+  const dismissToast = (id) => {
+    setLiveNotifications((prev) => prev.filter((item) => item.id !== id));
+  };
 
   return (
     <div style={{
@@ -18,8 +109,81 @@ export default function App() {
       overflow: 'hidden',
       boxSizing: 'border-box',
       margin: 0,
-      padding: 0
+      padding: 0,
+      position: 'relative'
     }}>
+      {/* 5. Floating Top-Right Animated Toast Alert Banner Notification Container */}
+      <div style={{
+        position: 'fixed',
+        top: '20px',
+        right: '24px',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px',
+        maxWidth: '380px',
+        pointerEvents: 'none'
+      }}>
+        {liveNotifications.map((note) => (
+          <div
+            key={note.id}
+            style={{
+              pointerEvents: 'auto',
+              backgroundColor: 'rgba(15, 23, 42, 0.95)',
+              borderLeft: '4px solid #ef4444',
+              border: '1px solid #dc2626',
+              borderRadius: '8px',
+              padding: '14px 16px',
+              boxShadow: '0 10px 25px -5px rgba(225, 29, 72, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.5)',
+              backdropFilter: 'blur(8px)',
+              animation: 'slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
+              transition: 'all 0.2s ease-in-out'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <span style={{ fontSize: '0.75rem', fontWeight: 800, color: '#f87171', letterSpacing: '0.05em' }}>
+                🚨 {note.title}
+              </span>
+              <button
+                onClick={() => dismissToast(note.id)}
+                style={{
+                  background: 'transparent',
+                  border: 'none',
+                  color: '#94a3b8',
+                  cursor: 'pointer',
+                  fontSize: '0.9rem',
+                  lineHeight: 1,
+                  padding: '2px 4px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+            <p style={{ margin: '0 0 6px 0', fontSize: '0.825rem', color: '#fecdd3', lineHeight: 1.4 }}>
+              {note.message}
+            </p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94a3b8' }}>
+              <span>Target: <strong style={{ color: '#f8fafc' }}>{note.containerId}</strong></span>
+              <span>{new Date(note.timestamp).toLocaleTimeString()}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* CSS Keyframes for Top-Right Toast Slide-In Animation */}
+      <style>{`
+        @keyframes slideInRight {
+          from {
+            transform: translateX(100%);
+            opacity: 0;
+          }
+          to {
+            transform: translateX(0);
+            opacity: 1;
+          }
+        }
+      `}</style>
+
       {/* Left Navigation Panel */}
       <div style={{
         width: '260px',
@@ -140,18 +304,19 @@ export default function App() {
           </nav>
         </div>
 
-        {/* Bottom Sidebar Status Box */}
+        {/* Bottom Sidebar Status Box with WebSocket Connection State */}
         <div style={{
           backgroundColor: '#0f172a',
           padding: '12px',
           borderRadius: '8px',
           border: '1px solid #1e293b'
         }}>
-          <span style={{ fontSize: '0.7rem', color: '#22c55e', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#22c55e', display: 'inline-block' }}></span> TELEMETRY LIVE
+          <span style={{ fontSize: '0.7rem', color: wsConnected ? '#22c55e' : '#ef4444', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: wsConnected ? '#22c55e' : '#ef4444', display: 'inline-block' }}></span> 
+            {wsConnected ? 'STREAM ACTIVE' : 'STREAM RECONNECTING'}
           </span>
           <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginTop: '4px' }}>
-            Latency: 12ms | Async Loop Active
+            Live Notifications: {liveNotifications.length}
           </span>
         </div>
       </div>
@@ -188,6 +353,30 @@ export default function App() {
               </div>
             </div>
 
+            {/* In-View Alert Summary Banner (Syncs with total active warnings) */}
+            {alerts.length > 0 && (
+              <div style={{
+                backgroundColor: 'rgba(225, 29, 72, 0.15)',
+                border: '1px solid rgba(225, 29, 72, 0.4)',
+                borderRadius: '10px',
+                padding: '14px 18px',
+                marginBottom: '20px',
+                flexShrink: 0
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#fb7185', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    🚨 CRITICAL PHARMA / REEFER ANOMALY DETECTED ({alerts.length})
+                  </span>
+                  <span style={{ fontSize: '0.75rem', color: '#fda4af' }}>
+                    Latest: {alerts[0]?.container_id}
+                  </span>
+                </div>
+                <p style={{ margin: 0, fontSize: '0.85rem', color: '#fecdd3' }}>
+                  {alerts[0]?.message}
+                </p>
+              </div>
+            )}
+
             {/* Quick Status Cards Row */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '20px', flexShrink: 0 }}>
               <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '16px' }}>
@@ -207,8 +396,8 @@ export default function App() {
               </div>
               <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '16px' }}>
                 <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Alert Escalations</span>
-                <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#f8fafc', margin: '8px 0 4px 0' }}>03 <span style={{ fontSize: '0.8rem', fontWeight: 400, color: '#64748b' }}>pending action</span></div>
-                <span style={{ fontSize: '0.7rem', color: '#ef4444' }}>-1 critical</span>
+                <div style={{ fontSize: '1.75rem', fontWeight: 800, color: '#f8fafc', margin: '8px 0 4px 0' }}>{alerts.length} <span style={{ fontSize: '0.8rem', fontWeight: 400, color: '#64748b' }}>live triggers</span></div>
+                <span style={{ fontSize: '0.7rem', color: alerts.length > 0 ? '#ef4444' : '#22c55e' }}>{alerts.length > 0 ? 'Action Required' : 'All Clear'}</span>
               </div>
             </div>
 
