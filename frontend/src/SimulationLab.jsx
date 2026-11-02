@@ -8,12 +8,49 @@ export default function SimulationLab() {
   });
 
   const [loadFactor, setLoadFactor] = useState(70);
+  const [apiStatus, setApiStatus] = useState({ loading: false, error: null });
 
-  const toggleDisruption = (key) => {
-    setDisruptions((prev) => ({ ...prev, [key]: !prev[key] }));
+  const toggleDisruption = async (key) => {
+    const nextState = !disruptions[key];
+    
+    // Map the UI state keys to the expected backend disruption_key payload values
+    let backendKey = key;
+    if (key === 'customs') {
+      backendKey = 'customs_outage';
+    } else if (key === 'gate') {
+      backendKey = 'gate_slowdown';
+    }
+
+    setApiStatus({ loading: true, error: null });
+
+    try {
+      const response = await fetch('http://localhost:8000/api/v1/simulation/toggle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          disruption_key: backendKey,
+          state: nextState,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned status ${response.status}`);
+      }
+
+      // If successful, update local UI state
+      setDisruptions((prev) => ({ ...prev, [key]: nextState }));
+      setApiStatus({ loading: false, error: null });
+    } catch (err) {
+      console.error('Failed to sync simulation toggle with backend:', err);
+      // Fallback/opt-in local update or display error warning banner
+      setApiStatus({ loading: false, error: 'Backend sync failed. Local state unchanged.' });
+    }
   };
 
   const activeCount = Object.values(disruptions).filter(Boolean).length;
+  const isAnyActive = activeCount > 0;
 
   // Calculate dynamic risk score based on load factor and active bottleneck counts
   const rawRiskScore = (loadFactor / 10) + activeCount * 2.5;
@@ -52,11 +89,38 @@ export default function SimulationLab() {
           <h2 style={styles.title}>Simulation Lab — What-If Disruption Testing</h2>
           <p style={styles.subtitle}>Configure structural port bottlenecks and evaluate real-time terminal resilience telemetry.</p>
         </div>
-        <div style={styles.statusBadge}>
-          <span style={styles.statusDot}></span>
-          LIVE SIMULATION ENGINE ACTIVE
+        
+        {/* Dynamic Simulation Engine Status Badge */}
+        <div style={{
+          padding: '6px 14px',
+          borderRadius: '20px',
+          fontSize: '12px',
+          fontWeight: '600',
+          letterSpacing: '0.5px',
+          backgroundColor: isAnyActive ? 'rgba(239, 68, 68, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+          border: isAnyActive ? '1px solid #ef4444' : '1px solid #475569',
+          color: isAnyActive ? '#f87171' : '#94a3b8',
+          transition: 'all 0.3s ease',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '8px'
+        }}>
+          <span style={{
+            width: '8px',
+            height: '8px',
+            backgroundColor: isAnyActive ? '#ef4444' : '#94a3b8',
+            borderRadius: '50%',
+            boxShadow: isAnyActive ? '0 0 8px #ef4444' : 'none'
+          }}></span>
+          {isAnyActive ? 'LIVE SIMULATION ENGINE ACTIVE' : 'SIMULATION ENGINE IDLE'}
         </div>
       </div>
+
+      {apiStatus.error && (
+        <div style={styles.errorBanner}>
+          <span>⚠️ {apiStatus.error}</span>
+        </div>
+      )}
 
       <div style={styles.grid}>
         {/* Disruption Control Grid */}
@@ -68,7 +132,7 @@ export default function SimulationLab() {
             {/* Toggle 1 */}
             <div style={{ ...styles.toggleItem, borderColor: disruptions.customs ? '#ef4444' : '#334155' }}>
               <div style={styles.toggleInfo}>
-                <span style={styles.toggleLabel}>Customs Server Clearance Latency</span>
+                <span style={styles.toggleLabel}>Customs Server Clearance Outage</span>
                 <span style={styles.toggleSub}>Simulated system failure & digital clearance backlog</span>
               </div>
               <div style={styles.toggleActionContainer}>
@@ -79,9 +143,11 @@ export default function SimulationLab() {
                 )}
                 <button
                   onClick={() => toggleDisruption('customs')}
+                  disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
                     backgroundColor: disruptions.customs ? '#ef4444' : '#334155',
+                    opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
                   {disruptions.customs ? 'ON' : 'OFF'}
@@ -103,9 +169,11 @@ export default function SimulationLab() {
                 )}
                 <button
                   onClick={() => toggleDisruption('rail')}
+                  disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
                     backgroundColor: disruptions.rail ? '#ef4444' : '#334155',
+                    opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
                   {disruptions.rail ? 'ON' : 'OFF'}
@@ -127,9 +195,11 @@ export default function SimulationLab() {
                 )}
                 <button
                   onClick={() => toggleDisruption('gate')}
+                  disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
                     backgroundColor: disruptions.gate ? '#ef4444' : '#334155',
+                    opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
                   {disruptions.gate ? 'ON' : 'OFF'}
@@ -209,7 +279,7 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: '24px',
+    marginBottom: '20px',
     borderBottom: '1px solid #1e293b',
     paddingBottom: '16px',
     flexWrap: 'wrap',
@@ -227,25 +297,15 @@ const styles = {
     fontSize: '14px',
     color: '#94a3b8',
   },
-  statusBadge: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    backgroundColor: 'rgba(6, 182, 212, 0.1)',
-    color: '#06b6d4',
-    padding: '6px 12px',
-    borderRadius: '20px',
-    fontSize: '12px',
-    fontWeight: '600',
-    border: '1px solid rgba(6, 182, 212, 0.3)',
-    letterSpacing: '0.05em',
-  },
-  statusDot: {
-    width: '8px',
-    height: '8px',
-    backgroundColor: '#06b6d4',
-    borderRadius: '50%',
-    boxShadow: '0 0 8px #06b6d4',
+  errorBanner: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    border: '1px solid rgba(239, 68, 68, 0.3)',
+    color: '#f87171',
+    padding: '10px 14px',
+    borderRadius: '8px',
+    fontSize: '13px',
+    marginBottom: '20px',
+    fontWeight: '500',
   },
   grid: {
     display: 'grid',

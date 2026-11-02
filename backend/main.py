@@ -108,6 +108,20 @@ class TelemetryPacket(BaseModel):
         from_attributes = True
 
 
+# Pydantic model for Simulation Disruption Toggle requests
+class SimulationToggleRequest(BaseModel):
+    disruption_key: str = Field(..., description="Key of the disruption: customs_outage, rail_maintenance, gate_slowdown")
+    state: bool = Field(..., description="Boolean activation state")
+
+
+# Global In-Memory State Dictionary for Stage 2 "What-If" Crisis Disruption Toggles
+simulation_disruptions_state = {
+    "customs_outage": False,
+    "rail_maintenance": False,
+    "gate_slowdown": False
+}
+
+
 # In-memory simulation targets moving towards JNPT Port [18.9500, 72.9500].
 JNPT_TARGET_LAT = 18.9500
 JNPT_TARGET_LON = 72.9500
@@ -149,12 +163,19 @@ async def background_telemetry_simulator():
                         data["lat"] += lat_diff * 0.08
                         data["lon"] += lon_diff * 0.08
 
+                    # Apply global simulation disruption overrides if active
+                    current_speed = data["speed"]
+                    current_status = data["status"]
+                    if simulation_disruptions_state["gate_slowdown"] and "Truck" in asset_id:
+                        current_speed = 0.0
+                        current_status = "CONGESTED_GRIDLOCK"
+
                     db_record = AssetTelemetryModel(
                         asset_id=asset_id,
-                        status=data["status"],
+                        status=current_status,
                         latitude=round(data["lat"], 6),
                         longitude=round(data["lon"], 6),
-                        speed=data["speed"],
+                        speed=current_speed,
                         timestamp=datetime.utcnow(),
                     )
                     session.add(db_record)
@@ -187,7 +208,7 @@ app = FastAPI(
         "High-performance asynchronous backend for real-time "
         "port logistics digital twin."
     ),
-    version="2.4.0",
+    version="2.5.0",
     lifespan=lifespan,
 )
 
@@ -215,6 +236,27 @@ async def get_db():
             raise
         finally:
             await session.close()
+
+
+# POST /api/v1/simulation/toggle - Stage 2 Crisis Disruption Control Endpoint
+@app.post("/api/v1/simulation/toggle", status_code=status.HTTP_200_OK)
+async def toggle_simulation_disruption(payload: SimulationToggleRequest):
+    key = payload.disruption_key
+    state = payload.state
+
+    if key not in simulation_disruptions_state:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid disruption key: '{key}'. Valid options are: {list(simulation_disruptions_state.keys())}"
+        )
+
+    simulation_disruptions_state[key] = state
+    return {
+        "status": "success",
+        "disruption_key": key,
+        "state": state,
+        "current_disruptions": simulation_disruptions_state
+    }
 
 
 # POST /api/telemetry
@@ -277,7 +319,7 @@ async def get_live_assets(db: AsyncSession = Depends(get_db)):
         )
 
 
-# Core shared processing function for incoming national stream packets
+# Core shared processing function for incoming national stream packets with Disruption Interception
 async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSession):
     schema_family = payload.get("schema_family")
     if not schema_family:
@@ -300,7 +342,7 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
         except (TypeError, ValueError):
             pass
 
-    # Family 1: Vahan vehicle tracking -> assets_telemetry.
+    # Family 1: Vahan vehicle tracking -> assets_telemetry (Interception for Gate Slowdown)
     if schema_family == "mock_vahan_commercial_vehicle":
         vehicle_data = payload.get("vehicle", {})
         trip_data = payload.get("trip", {})
@@ -312,10 +354,16 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
         speed_kph = float(trip_data.get("speed_kph", 0.0) or 0.0)
         lat = float(gps_data.get("lat", 18.9500) or 18.9500)
         lon = float(gps_data.get("lon", 72.9500) or 72.9500)
+        status_str = "National Highway Transit"
+
+        # Apply gate_slowdown disruption override if active
+        if simulation_disruptions_state["gate_slowdown"]:
+            speed_kph = 0.0
+            status_str = "CONGESTED_GRIDLOCK"
 
         db_record = AssetTelemetryModel(
             asset_id=registration_id,
-            status="National Highway Transit",
+            status=status_str,
             latitude=lat,
             longitude=lon,
             speed=speed_kph,
@@ -328,9 +376,10 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             "schema_family": schema_family,
             "target": registration_id,
             "routed_to": "assets_telemetry",
+            "disruptions_active": simulation_disruptions_state
         }
 
-    # Family 2: LDB container cycle -> container_inventory + WebSocket broadcast trigger.
+    # Family 2: LDB container cycle -> container_inventory (Interception for Customs Outage)
     elif schema_family == "mock_ldb_container_cycle":
         container_data = payload.get("container", {})
         reefer_data = container_data.get("reefer") or {}
@@ -344,6 +393,12 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
         )
         dwell_hours = container_data.get("dwell_hours")
         dwell_val = float(dwell_hours) if dwell_hours is not None else 0.0
+        container_status = "In Yard"
+
+        # Apply customs_outage disruption override (multiply dwell hours by 5.0 and flag status)
+        if simulation_disruptions_state["customs_outage"]:
+            dwell_val *= 5.0
+            container_status = "CUSTOMS_HOLD_DELAYED"
 
         existing_stmt = select(ContainerInventoryModel).where(
             ContainerInventoryModel.container_no == container_id
@@ -354,6 +409,7 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
         if db_record:
             db_record.temperature_celsius = temp_val
             db_record.stay_duration_hours = dwell_val
+            db_record.status = container_status
         else:
             db_record = ContainerInventoryModel(
                 container_no=container_id,
@@ -365,7 +421,7 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
                 commodity=container_data.get("cargo_class", "GENERAL"),
                 temperature_celsius=temp_val,
                 stay_duration_hours=dwell_val,
-                status="In Yard",
+                status=container_status,
             )
             db.add(db_record)
 
@@ -379,17 +435,23 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             "schema_family": schema_family,
             "target": container_id,
             "routed_to": "container_inventory",
+            "disruptions_active": simulation_disruptions_state
         }
 
-    # Family 3: FOIS freight movement -> port_gate_logs.
+    # Family 3: FOIS freight movement -> port_gate_logs (Interception for Rail Maintenance)
     elif schema_family == "mock_fois_freight_movement":
         freight_data = payload.get("freight_movement", {})
         train_id = freight_data.get("train_id", "TRAIN-UNKNOWN")
+        train_status = "Processing"
+
+        # Apply rail_maintenance disruption override if active
+        if simulation_disruptions_state["rail_maintenance"]:
+            train_status = "RAIL_CORRIDOR_MAINTENANCE_HALT"
 
         db_record = PortGateLogModel(
             vehicle_no=train_id,
             gate_id="RAIL-GATE-1",
-            status="Processing",
+            status=train_status,
         )
         db.add(db_record)
         await db.commit()
@@ -398,6 +460,7 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             "schema_family": schema_family,
             "target": train_id,
             "routed_to": "port_gate_logs",
+            "disruptions_active": simulation_disruptions_state
         }
 
     raise HTTPException(
@@ -406,7 +469,7 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
     )
 
 
-# Dual-Route Ingestion Support to eliminate 404s
+# Dual-Route Ingestion Support
 @app.post(
     "/api/v1/ingest-national-stream",
     status_code=status.HTTP_201_CREATED,
