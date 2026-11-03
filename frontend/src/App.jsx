@@ -60,21 +60,31 @@ export default function App() {
   // ---------------------------------------------------------------------------
   // REAL-TIME COMPUTATION LAYER (Dynamic Metrics Calculation)
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // REAL-TIME COMPUTATION LAYER (Fail-safe Data Bindings)
+  // ---------------------------------------------------------------------------
   const metrics = useMemo(() => {
+    if (!Array.isArray(assets)) {
+      return { activeAssetsCount: 0, avgTransitSpeed: '0.0', congestionAlertCount: 0, vahanCount: 0 };
+    }
+
     // 1. Active Assets On-Screen
     const activeAssetsCount = assets.length;
 
     // 2. Average Transit Speed for N3 / N2 Vahan trucks
     const vahanTrucks = assets.filter(
-      (asset) => asset.category === 'N3 Vahan' || asset.category === 'N2 Vahan' || asset.id.startsWith('TRK-')
+      (asset) =>
+        asset?.category === 'N3 Vahan' ||
+        asset?.category === 'N2 Vahan' ||
+        (typeof asset?.id === 'string' && asset.id.startsWith('TRK-'))
     );
 
-    const totalSpeed = vahanTrucks.reduce((acc, curr) => acc + (Number(curr.speed) || 0), 0);
+    const totalSpeed = vahanTrucks.reduce((acc, curr) => acc + (Number(curr?.speed) || 0), 0);
     const avgTransitSpeed = vahanTrucks.length > 0 ? (totalSpeed / vahanTrucks.length).toFixed(1) : '0.0';
 
-    // 3. Active Congestion Alert Index (statuses matching "CONGESTED_GRIDLOCK" or "HELD")
+    // 3. Active Congestion Alert Index
     const congestionAlertCount = assets.reduce((count, asset) => {
-      if (asset.status === 'CONGESTED_GRIDLOCK' || asset.status === 'HELD') {
+      if (asset?.status === 'CONGESTED_GRIDLOCK' || asset?.status === 'HELD') {
         return count + 1;
       }
       return count;
