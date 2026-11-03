@@ -17,12 +17,18 @@ from sqlalchemy import Float, Integer, String, DateTime, select, func
 
 # WebSocket alert router integration
 from routers.alert_router import alert_router, publish_ldb_event
-
+from routers.analytics_router import analytics_router, analytics_manager
+#from services.gate_analytics import get_gate_analytics
 
 # 1. Database connection configuration with your active MySQL credentials
+#DATABASE_URL = os.getenv(
+#    "PORTSYNC_DATABASE_URL",
+#    "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
+#)
+
 DATABASE_URL = os.getenv(
     "PORTSYNC_DATABASE_URL",
-    "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
+    "mysql+aiomysql://root:@localhost:3306/portsync_twin",
 )
 
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
@@ -141,6 +147,64 @@ simulated_assets_state = {
     },
 }
 
+# In-memory state for simulated truck gate processing
+truck_gate_simulation_state = {
+    "active_gate_log_id": None,
+    "entry_time": None,
+    "processing_minutes_normal": 2,
+    "processing_minutes_slowdown": 8,
+}
+
+async def process_simulated_truck_gate(session: AsyncSession):
+    """Simulate repeated gate visits for Truck-MH-04."""
+
+    state = truck_gate_simulation_state
+    now = datetime.utcnow()
+
+    # Check whether the truck already has an active gate visit.
+    if state["active_gate_log_id"] is None:
+
+        gate_log = PortGateLogModel(
+            vehicle_no="Truck-MH-04",
+            gate_id="GATE-1",
+            entry_time=now,
+            exit_time=None,
+            status="Processing",
+        )
+
+        session.add(gate_log)
+        await session.flush()
+
+        state["active_gate_log_id"] = gate_log.id
+        state["entry_time"] = now
+
+        return
+
+    # Determine processing duration based on gate slowdown.
+    if simulation_disruptions_state["gate_slowdown"]:
+        processing_minutes = state["processing_minutes_slowdown"]
+    else:
+        processing_minutes = state["processing_minutes_normal"]
+
+    elapsed_minutes = (
+        now - state["entry_time"]
+    ).total_seconds() / 60
+
+    # Complete the gate visit when its processing duration expires.
+    if elapsed_minutes >= processing_minutes:
+
+        gate_log = await session.get(
+            PortGateLogModel,
+            state["active_gate_log_id"],
+        )
+
+        if gate_log is not None:
+            gate_log.exit_time = now
+            gate_log.status = "Completed"
+
+        # Reset state so the next visit can begin.
+        state["active_gate_log_id"] = None
+        state["entry_time"] = None
 
 # Background task: generate and save simulated telemetry every 5 seconds.
 async def background_telemetry_simulator():
@@ -180,24 +244,60 @@ async def background_telemetry_simulator():
                     )
                     session.add(db_record)
 
+                # Process simulated truck gate entry and exit.
+                await process_simulated_truck_gate(session)
                 await session.commit()
             except Exception as e:
                 await session.rollback()
                 print(f"Background simulation error: {e}")
 
 
+async def background_analytics_publisher():
+    """Periodically broadcast live gate analytics to WebSocket clients."""
+    from services.gate_analytics import get_gate_analytics
+
+    while True:
+        try:
+            async with AsyncSessionLocal() as session:
+                analytics = await get_gate_analytics(session)
+
+            await analytics_manager.broadcast(analytics)
+
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            print(f"Analytics publisher error: {exc}")
+
+        await asyncio.sleep(5)
+
+
 # FastAPI lifespan manager.
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Create database tables from the existing SQLAlchemy models
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Start the existing background telemetry simulator
     sim_task = asyncio.create_task(background_telemetry_simulator())
+
+    # Start the live analytics WebSocket publisher
+    analytics_task = asyncio.create_task(background_analytics_publisher())
+
     try:
         yield
     finally:
+        # Stop both background tasks
         sim_task.cancel()
-        try:
-            await sim_task
-        except asyncio.CancelledError:
-            pass
+        analytics_task.cancel()
+
+        for task in (sim_task, analytics_task):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
         await engine.dispose()
 
 
@@ -224,6 +324,8 @@ app.add_middleware(
 # Register WebSocket Alert Router.
 app.include_router(alert_router)
 
+# Register Live Analytics Router.
+app.include_router(analytics_router)
 
 # Database session dependency.
 async def get_db():
@@ -236,6 +338,14 @@ async def get_db():
             raise
         finally:
             await session.close()
+
+# GET /api/v1/analytics/summary
+@app.get("/api/v1/analytics/summary")
+async def analytics_summary(
+    db: AsyncSession = Depends(get_db),
+):
+    from services.gate_analytics import get_gate_analytics
+    return await get_gate_analytics(db)            
 
 
 # POST /api/v1/simulation/toggle - Stage 2 Crisis Disruption Control Endpoint
