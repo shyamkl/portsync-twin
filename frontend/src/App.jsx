@@ -1,15 +1,62 @@
+// frontend/src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
+import { Bell, ShieldAlert, AlertTriangle, CheckCircle2, X, Volume2, VolumeX } from 'lucide-react';
 import usePortSyncAlerts from './hooks/usePortSyncAlerts';
 import YardMatrix from './YardMatrix';
 import CommandMap from './CommandMap';
 import SimulationLab from './SimulationLab';
 import AnalyticsInsights from './AnalyticsInsights';
 
+/**
+ * Web Audio API synthesizer helper to generate a professional dual-tone alarm pulse.
+ * Avoids broken external audio URLs by synthesizing directly in the browser.
+ */
+const playCriticalAlarmTone = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    
+    const ctx = new AudioContext();
+    const now = ctx.currentTime;
+
+    // Dual-frequency pulse for high-visibility industrial alert sound
+    [880, 1174.66].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.12);
+
+      // Volume envelope: rapid attack, quick decay
+      gain.gain.setValueAtTime(0, now + idx * 0.12);
+      gain.gain.linearRampToValueAtTime(0.25, now + idx * 0.12 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.12 + 0.25);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now + idx * 0.12);
+      osc.stop(now + idx * 0.12 + 0.26);
+    });
+  } catch (err) {
+    console.warn('Audio playback restricted or unsupported:', err);
+  }
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState('commandMap');
   
   // Real-time WebSocket Triage Notifications State & Connection Status
   const [liveNotifications, setLiveNotifications] = useState([]);
+  
+  // Requirement 1: Persistent notifications history log for the active session
+  const [notificationsHistory, setNotificationsHistory] = useState([]);
+  
+  // Requirement 2: Operations Notification Hub sidebar state & audio mute toggle
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [audioMuted, setAudioMuted] = useState(false);
+  const audioMutedRef = useRef(audioMuted);
+
   const [wsConnected, setWsConnected] = useState(false);
 
   // Live Database Analytics Summary State from Python backend
@@ -18,6 +65,11 @@ export default function App() {
   // Ref to hold WebSocket instance for safe cleanup and reconnect handling
   const wsRef = useRef(null);
   const reconnectTimerRef = useRef(null);
+
+  // Sync ref to maintain current mute state inside WebSocket callback closures
+  useEffect(() => {
+    audioMutedRef.current = audioMuted;
+  }, [audioMuted]);
 
   // Hook into teammate's alert hook for local component state sync
   const { alerts } = usePortSyncAlerts();
@@ -41,7 +93,7 @@ export default function App() {
     return () => clearInterval(analyticsInterval);
   }, []);
 
-  // 1. Global Background WebSocket Connection Listener
+  // 1 & 4. Global Background WebSocket Connection Listener & Audio Chime Trigger
   useEffect(() => {
     const connectWebSocket = () => {
       try {
@@ -61,20 +113,34 @@ export default function App() {
           try {
             const alertData = JSON.parse(event.data);
             
-            // Format packet for UI Toast rendering
+            // Format packet for UI notifications history & Toast rendering
             const notificationId = alertData.event_id || Date.now();
+            const severity = alertData.priority ? alertData.priority.toUpperCase() : 'CRITICAL';
+            
             const newNotification = {
               id: notificationId,
               title: alertData.priority ? `[${alertData.priority}] REEFER ANOMALY` : "CRITICAL ALERT",
               message: alertData.message || "Temperature disruption detected on reefer container.",
               containerId: alertData.container_id || "UNKNOWN",
-              timestamp: alertData.timestamp || new Date().toISOString()
+              timestamp: alertData.timestamp || new Date().toISOString(),
+              severity: severity,
+              targetTemp: alertData.target_temp || '-20.0°C',
+              temp: alertData.temp || '+4.2°C',
+              acknowledged: false
             };
 
-            // 2. Append dynamically to liveNotifications state
+            // 1. Append dynamically to persistent notificationsHistory state
+            setNotificationsHistory((prev) => [newNotification, ...prev]);
+
+            // 4. Trigger HTML5 / Web Audio chime if severity is CRITICAL and audio not muted
+            if (newNotification.severity === 'CRITICAL' && !audioMutedRef.current) {
+              playCriticalAlarmTone();
+            }
+
+            // Append to live temporary toasts as well
             setLiveNotifications((prev) => [newNotification, ...prev]);
 
-            // 3. Auto-dismiss Toast Alert after 5 seconds
+            // Auto-dismiss Toast Alert after 5 seconds
             setTimeout(() => {
               setLiveNotifications((prev) => prev.filter((item) => item.id !== notificationId));
             }, 5000);
@@ -90,7 +156,6 @@ export default function App() {
 
         ws.onclose = () => {
           setWsConnected(false);
-          // 4. Safe Auto-Reconnect Logic after 3 seconds if backend disconnects or isn't ready
           reconnectTimerRef.current = setTimeout(() => {
             connectWebSocket();
           }, 3000);
@@ -119,6 +184,21 @@ export default function App() {
     setLiveNotifications((prev) => prev.filter((item) => item.id !== id));
   };
 
+  // Requirement 3: Toggle acknowledgement status for alerts in the hub
+  const toggleAcknowledgeAlert = (id) => {
+    setNotificationsHistory((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, acknowledged: !item.acknowledged } : item
+      )
+    );
+  };
+
+  const clearAllNotifications = () => {
+    setNotificationsHistory([]);
+  };
+
+  const unacknowledgedCount = notificationsHistory.filter((n) => !n.acknowledged).length;
+
   return (
     <div style={{
       display: 'flex',
@@ -133,7 +213,7 @@ export default function App() {
       padding: 0,
       position: 'relative'
     }}>
-      {/* 5. Floating Top-Right Animated Toast Alert Banner Notification Container */}
+      {/* Floating Top-Right Animated Toast Alert Banner Notification Container */}
       <div style={{
         position: 'fixed',
         top: '20px',
@@ -191,7 +271,7 @@ export default function App() {
         ))}
       </div>
 
-      {/* CSS Keyframes for Top-Right Toast Slide-In Animation */}
+      {/* CSS Keyframes for Toast Slide-In Animation */}
       <style>{`
         @keyframes slideInRight {
           from {
@@ -337,7 +417,7 @@ export default function App() {
             {wsConnected ? 'STREAM ACTIVE' : 'STREAM RECONNECTING'}
           </span>
           <span style={{ fontSize: '0.7rem', color: '#64748b', display: 'block', marginTop: '4px' }}>
-            Live Notifications: {liveNotifications.length}
+            Session Log: {notificationsHistory.length}
           </span>
           {gateAnalytics && (
             <span style={{ fontSize: '0.65rem', color: '#38bdf8', display: 'block', marginTop: '4px' }}>
@@ -357,6 +437,79 @@ export default function App() {
         padding: '24px 28px',
         boxSizing: 'border-box'
       }}>
+        {/* Top Header Bar with Operations Notification Hub Trigger & Audio Toggle */}
+        <div style={{
+          display: 'flex',
+          justifyContent: 'flex-end',
+          alignItems: 'center',
+          gap: '12px',
+          marginBottom: '16px',
+          flexShrink: 0
+        }}>
+          {/* Audio Alarm Mute/Unmute Toggle Button */}
+          <button
+            onClick={() => setAudioMuted((prev) => !prev)}
+            title={audioMuted ? 'Unmute Critical Alarms' : 'Mute Critical Alarms'}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              padding: '8px 12px',
+              backgroundColor: audioMuted ? '#1e293b' : 'rgba(14, 165, 233, 0.1)',
+              border: audioMuted ? '1px solid #334155' : '1px solid rgba(56, 189, 248, 0.3)',
+              borderRadius: '8px',
+              color: audioMuted ? '#94a3b8' : '#38bdf8',
+              cursor: 'pointer',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              transition: 'all 0.15s ease'
+            }}
+          >
+            {audioMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+            <span>{audioMuted ? 'Alarms Muted' : 'Audio Armed'}</span>
+          </button>
+
+          {/* Requirement 2: Operations Notification Hub Trigger Button with Bell & Badge */}
+          <button
+            onClick={() => setIsSidebarOpen(true)}
+            style={{
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 16px',
+              backgroundColor: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: '8px',
+              color: '#f8fafc',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.85s',
+              transition: 'all 0.15s ease'
+            }}
+            aria-label="Open Operations Notification Hub"
+          >
+            <Bell size={18} style={{ color: '#38bdf8' }} />
+            <span>Operations Hub</span>
+            {unacknowledgedCount > 0 && (
+              <span style={{
+                position: 'absolute',
+                top: '-6px',
+                right: '-6px',
+                backgroundColor: '#ef4444',
+                color: '#ffffff',
+                fontSize: '0.65rem',
+                fontWeight: 800,
+                padding: '2px 6px',
+                borderRadius: '9999px',
+                boxShadow: '0 0 8px rgba(239, 68, 68, 0.6)'
+              }}>
+                {unacknowledgedCount > 99 ? '99+' : unacknowledgedCount}
+              </span>
+            )}
+          </button>
+        </div>
+
         {activeTab === 'commandMap' && (
           <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
             <div style={{
@@ -456,6 +609,212 @@ export default function App() {
           </div>
         )}
       </div>
+
+      {/* Requirement 2 & 3: Slide-Out Operations Notification Hub Sidebar */}
+      {isSidebarOpen && (
+        <div 
+          onClick={() => setIsSidebarOpen(false)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(6, 9, 19, 0.75)',
+            backdropFilter: 'blur(4px)',
+            zIndex: 9998,
+            transition: 'opacity 0.2s ease-in-out'
+          }}
+        />
+      )}
+
+      <aside style={{
+        position: 'fixed',
+        top: 0,
+        right: 0,
+        height: '100%',
+        width: '400px',
+        maxWidth: '100%',
+        backgroundColor: '#090d16',
+        borderLeft: '1px solid #1e293b',
+        zIndex: 9999,
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '-10px 0 30px rgba(0, 0, 0, 0.7)',
+        transform: isSidebarOpen ? 'translateX(0)' : 'translateX(100%)',
+        transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
+      }}>
+        {/* Sidebar Header */}
+        <div style={{
+          padding: '20px',
+          borderBottom: '1px solid #1e293b',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'between',
+          backgroundColor: '#0f172a'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <Bell size={20} style={{ color: '#38bdf8' }} />
+            <h2 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#f8fafc', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              Operations Notification Hub
+            </h2>
+          </div>
+          <button
+            onClick={() => setIsSidebarOpen(false)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#94a3b8',
+              cursor: 'pointer',
+              padding: '6px',
+              borderRadius: '6px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'background 0.15s ease'
+            }}
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {/* Sidebar Controls Bar */}
+        <div style={{
+          padding: '12px 20px',
+          backgroundColor: '#060913',
+          borderBottom: '1px solid #1e293b',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontSize: '0.8rem',
+          color: '#94a3b8'
+        }}>
+          <span>Active Session Logs ({notificationsHistory.length})</span>
+          {notificationsHistory.length > 0 && (
+            <button
+              onClick={clearAllNotifications}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#38bdf8',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                textDecoration: 'underline'
+              }}
+            >
+              Clear Log
+            </button>
+          )}
+        </div>
+
+        {/* Requirement 3: Alerts List Inside Hub */}
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px'
+        }}>
+          {notificationsHistory.length === 0 ? (
+            <div style={{
+              height: '100%',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#64748b',
+              gap: '10px',
+              textAlign: 'center',
+              padding: '40px'
+            }}>
+              <CheckCircle2 size={40} style={{ strokeWidth: 1.5 }} />
+              <p style={{ margin: 0, fontSize: '0.85rem', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                No alerts recorded in active session
+              </p>
+            </div>
+          ) : (
+            notificationsHistory.map((alert) => {
+              const isCritical = alert.severity === 'CRITICAL';
+              const isResolved = alert.acknowledged;
+
+              return (
+                <div
+                  key={alert.id}
+                  style={{
+                    backgroundColor: isResolved ? 'rgba(15, 23, 42, 0.4)' : isCritical ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.12)',
+                    border: isResolved ? '1px solid #1e293b' : isCritical ? '1px solid rgba(239, 68, 68, 0.4)' : '1px solid rgba(245, 158, 11, 0.4)',
+                    borderRadius: '8px',
+                    padding: '14px',
+                    opacity: isResolved ? 0.45 : 1,
+                    transition: 'all 0.2s ease-in-out'
+                  }}
+                >
+                  {/* Severity Tag & Timestamp */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                    <span style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '3px 8px',
+                      borderRadius: '4px',
+                      fontSize: '0.7rem',
+                      fontWeight: 800,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.05em',
+                      backgroundColor: isCritical ? 'rgba(239, 68, 68, 0.2)' : 'rgba(245, 158, 11, 0.2)',
+                      color: isCritical ? '#f87171' : '#fbbf24',
+                      border: isCritical ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(245, 158, 11, 0.3)'
+                    }}>
+                      {isCritical ? <ShieldAlert size={12} /> : <AlertTriangle size={12} />}
+                      {alert.severity}
+                    </span>
+                    <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#94a3b8' }}>
+                      {new Date(alert.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                    </span>
+                  </div>
+
+                  {/* Alert Content */}
+                  <div style={{ marginBottom: '10px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#f8fafc' }}>
+                        {alert.containerId}
+                      </span>
+                      <span style={{ fontSize: '0.75rem', fontFamily: 'monospace', color: '#38bdf8' }}>
+                        {alert.temp} <span style={{ color: '#64748b' }}>(Target: {alert.targetTemp})</span>
+                      </span>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#cbd5e1', lineHeight: 1.4 }}>
+                      {alert.message}
+                    </p>
+                  </div>
+
+                  {/* Requirement 3: Interactive Acknowledge Button */}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #1e293b', paddingTop: '8px' }}>
+                    <button
+                      onClick={() => toggleAcknowledgeAlert(alert.id)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        backgroundColor: isResolved ? '#1e293b' : '#131c31',
+                        border: '1px solid #334155',
+                        borderRadius: '6px',
+                        color: isResolved ? '#94a3b8' : '#f8fafc',
+                        fontSize: '0.75rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        transition: 'background 0.15s ease'
+                      }}
+                    >
+                      <CheckCircle2 size={14} style={{ color: isResolved ? '#22c55e' : '#94a3b8' }} />
+                      <span>{isResolved ? 'Resolved' : 'Acknowledge Alert'}</span>
+                    </button>
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </aside>
     </div>
   );
 }
