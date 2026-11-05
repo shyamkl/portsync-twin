@@ -1,0 +1,12 @@
+.venv\Lib\site-packages\fastapi\openapi\models.py:350:class HTTPBearer(HTTPBase):
+.venv\Lib\site-packages\fastapi\openapi\models.py:396:SecurityScheme = APIKey | HTTPBase | OAuth2 | OpenIdConnect | HTTPBearer
+.venv\Lib\site-packages\fastapi\security\http.py:8:from fastapi.openapi.models import HTTPBearer as HTTPBearerModel
+.venv\Lib\site-packages\fastapi\security\http.py:31:    The HTTP authorization credentials in the result of using `HTTPBearer` or
+.venv\Lib\site-packages\fastapi\security\http.py:224:class HTTPBearer(HTTPBase):
+.venv\Lib\site-packages\fastapi\security\http.py:241:    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+.venv\Lib\site-packages\fastapi\security\http.py:245:    security = HTTPBearer()
+.venv\Lib\site-packages\fastapi\security\http.py:285:                `Authorization` header), `HTTPBearer` will automatically cancel the
+.venv\Lib\site-packages\fastapi\security\http.py:301:        self.model = HTTPBearerModel(bearerFormat=bearerFormat, description=description)
+.venv\Lib\site-packages\fastapi\security\oauth2.py:433:class OAuth2PasswordBearer(OAuth2):
+.venv\Lib\site-packages\fastapi\security\__init__.py:7:from .http import HTTPBearer as HTTPBearer
+.venv\Lib\site-packages\fastapi\security\__init__.py:11:from .oauth2 import OAuth2PasswordBearer as OAuth2PasswordBearer
