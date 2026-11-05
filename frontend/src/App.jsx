@@ -1,6 +1,6 @@
 // frontend/src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { Bell, ShieldAlert, AlertTriangle, CheckCircle2, X, Volume2, VolumeX, Download } from 'lucide-react';
+import { Bell, ShieldAlert, AlertTriangle, CheckCircle2, X, Volume2, VolumeX, Download, Lock, ShieldCheck, UserCheck } from 'lucide-react';
 import usePortSyncAlerts from './hooks/usePortSyncAlerts';
 import YardMatrix from './YardMatrix';
 import CommandMap from './CommandMap';
@@ -48,13 +48,19 @@ export default function App() {
   
   const [activeTab, setActiveTab] = useState('commandMap');
   
+  // Requirement 1: RBAC State Hook initialized to "Field Operator"
+  const [currentUserRole, setCurrentUserRole] = useState('Field Operator');
+  
+  // Security Exception Toast Notification State (Requirement 4)
+  const [securityToast, setSecurityToast] = useState(null);
+
   // Real-time WebSocket Triage Notifications State & Connection Status
   const [liveNotifications, setLiveNotifications] = useState([]);
   
-  // Requirement 1: Persistent notifications history log for the active session
+  // Persistent notifications history log for the active session
   const [notificationsHistory, setNotificationsHistory] = useState([]);
   
-  // Requirement 2: Operations Notification Hub sidebar state & audio mute toggle
+  // Operations Notification Hub sidebar state & audio mute toggle
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [audioMuted, setAudioMuted] = useState(false);
   const audioMutedRef = useRef(audioMuted);
@@ -76,6 +82,19 @@ export default function App() {
   // Hook into teammate's alert hook for local component state sync
   const { alerts } = usePortSyncAlerts();
 
+  // Requirement 4: Security Exception Toast Trigger Handler
+  const handleSecurityRestriction = () => {
+    const toastId = Date.now();
+    setSecurityToast({
+      id: toastId,
+      message: "SECURITY EXCEPTION: Administrative Elevation Required"
+    });
+
+    setTimeout(() => {
+      setSecurityToast(null);
+    }, 4000);
+  };
+
   // Fetch Gateway & Gate Analytics Summary periodically from FastAPI backend
   useEffect(() => {
     const fetchAnalytics = async () => {
@@ -95,7 +114,7 @@ export default function App() {
     return () => clearInterval(analyticsInterval);
   }, []);
 
-  // 1 & 4. Global Background WebSocket Connection Listener & Audio Chime Trigger
+  // Global Background WebSocket Connection Listener & Audio Chime Trigger
   useEffect(() => {
     const connectWebSocket = () => {
       try {
@@ -115,7 +134,6 @@ export default function App() {
           try {
             const alertData = JSON.parse(event.data);
             
-            // Format packet for UI notifications history & Toast rendering
             const notificationId = alertData.event_id || Date.now();
             const severity = alertData.priority ? alertData.priority.toUpperCase() : 'CRITICAL';
             
@@ -131,18 +149,14 @@ export default function App() {
               acknowledged: false
             };
 
-            // 1. Append dynamically to persistent notificationsHistory state
             setNotificationsHistory((prev) => [newNotification, ...prev]);
 
-            // 4. Trigger HTML5 / Web Audio chime if severity is CRITICAL and audio not muted
             if (newNotification.severity === 'CRITICAL' && !audioMutedRef.current) {
               playCriticalAlarmTone();
             }
 
-            // Append to live temporary toasts as well
             setLiveNotifications((prev) => [newNotification, ...prev]);
 
-            // Auto-dismiss Toast Alert after 5 seconds
             setTimeout(() => {
               setLiveNotifications((prev) => prev.filter((item) => item.id !== notificationId));
             }, 5000);
@@ -186,7 +200,6 @@ export default function App() {
     setLiveNotifications((prev) => prev.filter((item) => item.id !== id));
   };
 
-  // Requirement 3: Toggle acknowledgement status for alerts in the hub
   const toggleAcknowledgeAlert = (id) => {
     setNotificationsHistory((prev) =>
       prev.map((item) =>
@@ -201,8 +214,13 @@ export default function App() {
 
   const unacknowledgedCount = notificationsHistory.filter((n) => !n.acknowledged).length;
 
-  // --- Task Requirement: System Operational Audit Log CSV Export Utility ---
+  // System Operational Audit Log CSV Export Utility (Locked down for Field Operator)
   const exportAuditLogCSV = () => {
+    if (currentUserRole === 'Field Operator') {
+      handleSecurityRestriction();
+      return;
+    }
+
     const headers = ['Timestamp', 'Asset ID', 'Event Type', 'Metrics/Speed', 'Operational Status'];
     
     const rows = notificationsHistory.length > 0
@@ -250,10 +268,36 @@ export default function App() {
         padding: 0,
         position: 'relative'
       }}>
+        {/* Requirement 4: Security Exception Flashing Red Banner Notification Toast */}
+        {securityToast && (
+          <div style={{
+            position: 'fixed',
+            top: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10000,
+            backgroundColor: 'rgba(239, 68, 68, 0.95)',
+            border: '1px solid #f87171',
+            borderRadius: '8px',
+            padding: '12px 24px',
+            boxShadow: '0 10px 25px -5px rgba(239, 68, 68, 0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px',
+            animation: 'flashBanner 0.4s ease-in-out infinite alternate',
+            backdropFilter: 'blur(8px)'
+          }}>
+            <AlertTriangle size={20} color="#f8fafc" />
+            <span style={{ fontSize: '0.875rem', fontWeight: 800, color: '#f8fafc', letterSpacing: '0.05em' }}>
+              {securityToast.message}
+            </span>
+          </div>
+        )}
+
         {/* Floating Top-Right Animated Toast Alert Banner Notification Container */}
         <div style={{
           position: 'fixed',
-          top: '20px',
+          top: '80px',
           right: '24px',
           zIndex: 9999,
           display: 'flex',
@@ -308,7 +352,7 @@ export default function App() {
           ))}
         </div>
 
-        {/* CSS Keyframes for Toast Slide-In Animation */}
+        {/* CSS Keyframes */}
         <style>{`
           @keyframes slideInRight {
             from {
@@ -319,6 +363,10 @@ export default function App() {
               transform: translateX(0);
               opacity: 1;
             }
+          }
+          @keyframes flashBanner {
+            from { opacity: 0.8; transform: translateX(-50%) scale(0.98); }
+            to { opacity: 1; transform: translateX(-50%) scale(1); }
           }
         `}</style>
 
@@ -474,100 +522,143 @@ export default function App() {
           padding: '24px 28px',
           boxSizing: 'border-box'
         }}>
-          {/* Top Header Bar with Operations Notification Hub Trigger, Audio Toggle & Export Audit Log Button */}
+          {/* Top Header Bar with RBAC Active Session Profile Widget, Operations Notification Hub Trigger & Audit Export */}
           <div style={{
             display: 'flex',
-            justifyContent: 'flex-end',
+            justifyContent: 'space-between',
             alignItems: 'center',
-            gap: '12px',
             marginBottom: '16px',
             flexShrink: 0
           }}>
-            {/* Export Audit Log Button */}
-            <button
-              onClick={exportAuditLogCSV}
-              title="Download System Operational Audit Log CSV"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 12px',
-                backgroundColor: '#0f172a',
-                border: '1px solid #334155',
-                borderRadius: '8px',
-                color: '#38bdf8',
-                cursor: 'pointer',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                transition: 'all 0.15s ease'
-              }}
-            >
-              <Download size={16} />
-              <span>Export Audit Log</span>
-            </button>
-
-            {/* Audio Alarm Mute/Unmute Toggle Button */}
-            <button
-              onClick={() => setAudioMuted((prev) => !prev)}
-              title={audioMuted ? 'Unmute Critical Alarms' : 'Mute Critical Alarms'}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                padding: '8px 12px',
-                backgroundColor: audioMuted ? '#1e293b' : 'rgba(14, 165, 233, 0.1)',
-                border: audioMuted ? '1px solid #334155' : '1px solid rgba(56, 189, 248, 0.3)',
-                borderRadius: '8px',
-                color: audioMuted ? '#94a3b8' : '#38bdf8',
-                cursor: 'pointer',
-                fontSize: '0.8rem',
-                fontWeight: 600,
-                transition: 'all 0.15s ease'
-              }}
-            >
-              {audioMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-              <span>{audioMuted ? 'Alarms Muted' : 'Audio Armed'}</span>
-            </button>
-
-            {/* Operations Notification Hub Trigger Button with Bell & Badge */}
-            <button
-              onClick={() => setIsSidebarOpen(true)}
-              style={{
-                position: 'relative',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '8px 16px',
-                backgroundColor: '#0f172a',
-                border: '1px solid #334155',
-                borderRadius: '8px',
-                color: '#f8fafc',
-                cursor: 'pointer',
-                fontWeight: 600,
-                fontSize: '0.85s',
-                transition: 'all 0.15s ease'
-              }}
-              aria-label="Open Operations Notification Hub"
-            >
-              <Bell size={18} style={{ color: '#38bdf8' }} />
-              <span>Operations Hub</span>
-              {unacknowledgedCount > 0 && (
-                <span style={{
-                  position: 'absolute',
-                  top: '-6px',
-                  right: '-6px',
-                  backgroundColor: '#ef4444',
-                  color: '#ffffff',
-                  fontSize: '0.65rem',
-                  fontWeight: 800,
-                  padding: '2px 6px',
-                  borderRadius: '9999px',
-                  boxShadow: '0 0 8px rgba(239, 68, 68, 0.6)'
-                }}>
-                  {unacknowledgedCount > 99 ? '99+' : unacknowledgedCount}
-                </span>
+            {/* Requirement 2: Active Session Profile Dropdown Selector Widget */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              backgroundColor: '#0f172a',
+              border: '1px solid #334155',
+              borderRadius: '8px',
+              padding: '6px 14px'
+            }}>
+              {currentUserRole === 'Terminal Operations Director' ? (
+                <ShieldCheck size={18} color="#38bdf8" />
+              ) : (
+                <UserCheck size={18} color="#94a3b8" />
               )}
-            </button>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                <span style={{ fontSize: '0.65rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.05em' }}>
+                  Active Session Profile
+                </span>
+                <select
+                  value={currentUserRole}
+                  onChange={(e) => setCurrentUserRole(e.target.value)}
+                  style={{
+                    background: 'transparent',
+                    border: 'none',
+                    color: currentUserRole === 'Terminal Operations Director' ? '#38bdf8' : '#f8fafc',
+                    fontSize: '0.85rem',
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    outline: 'none',
+                    paddingRight: '4px',
+                    fontFamily: 'inherit'
+                  }}
+                >
+                  <option value="Field Operator" style={{ backgroundColor: '#0f172a', color: '#f8fafc' }}>Field Operator (Read-Only Mode)</option>
+                  <option value="Terminal Operations Director" style={{ backgroundColor: '#0f172a', color: '#f8fafc' }}>Terminal Operations Director (Full Access Mode)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Right Action Controls */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {/* Requirement 3: Export Audit Log download button with lock state */}
+              <button
+                onClick={exportAuditLogCSV}
+                title={currentUserRole === 'Field Operator' ? 'Locked: Administrative Elevation Required' : 'Download System Operational Audit Log CSV'}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 12px',
+                  backgroundColor: currentUserRole === 'Field Operator' ? '#131b2e' : '#0f172a',
+                  border: currentUserRole === 'Field Operator' ? '1px dashed #475569' : '1px solid #334155',
+                  borderRadius: '8px',
+                  color: currentUserRole === 'Field Operator' ? '#64748b' : '#38bdf8',
+                  cursor: currentUserRole === 'Field Operator' ? 'not-allowed' : 'pointer',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  opacity: currentUserRole === 'Field Operator' ? 0.7 : 1,
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {currentUserRole === 'Field Operator' ? <Lock size={16} color="#ef4444" /> : <Download size={16} />}
+                <span>Export Audit Log</span>
+              </button>
+
+              {/* Audio Alarm Mute/Unmute Toggle Button */}
+              <button
+                onClick={() => setAudioMuted((prev) => !prev)}
+                title={audioMuted ? 'Unmute Critical Alarms' : 'Mute Critical Alarms'}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 12px',
+                  backgroundColor: audioMuted ? '#1e293b' : 'rgba(14, 165, 233, 0.1)',
+                  border: audioMuted ? '1px solid #334155' : '1px solid rgba(56, 189, 248, 0.3)',
+                  borderRadius: '8px',
+                  color: audioMuted ? '#94a3b8' : '#38bdf8',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                {audioMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+                <span>{audioMuted ? 'Alarms Muted' : 'Audio Armed'}</span>
+              </button>
+
+              {/* Operations Notification Hub Trigger Button with Bell & Badge */}
+              <button
+                onClick={() => setIsSidebarOpen(true)}
+                style={{
+                  position: 'relative',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '8px 16px',
+                  backgroundColor: '#0f172a',
+                  border: '1px solid #334155',
+                  borderRadius: '8px',
+                  color: '#f8fafc',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  transition: 'all 0.15s ease'
+                }}
+                aria-label="Open Operations Notification Hub"
+              >
+                <Bell size={18} style={{ color: '#38bdf8' }} />
+                <span>Operations Hub</span>
+                {unacknowledgedCount > 0 && (
+                  <span style={{
+                    position: 'absolute',
+                    top: '-6px',
+                    right: '-6px',
+                    backgroundColor: '#ef4444',
+                    color: '#ffffff',
+                    fontSize: '0.65rem',
+                    fontWeight: 800,
+                    padding: '2px 6px',
+                    borderRadius: '9999px',
+                    boxShadow: '0 0 8px rgba(239, 68, 68, 0.6)'
+                  }}>
+                    {unacknowledgedCount > 99 ? '99+' : unacknowledgedCount}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
 
           {activeTab === 'commandMap' && (
@@ -656,9 +747,13 @@ export default function App() {
                 </div>
               </div>
 
-              {/* PortConfigPanel Card (Below Map) */}
+              {/* PortConfigPanel Card (Passing RBAC props for threshold sliders locking) */}
               <div style={{ marginBottom: '20px', flexShrink: 0 }}>
-                <PortConfigPanel currentTeuCount={28450} />
+                <PortConfigPanel 
+                  currentTeuCount={28450} 
+                  userRole={currentUserRole}
+                  onSecurityRestriction={handleSecurityRestriction}
+                />
               </div>
             </div>
           )}
@@ -669,7 +764,11 @@ export default function App() {
 
           {activeTab === 'simulationLab' && (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
-              <SimulationLab />
+              {/* Passing RBAC props to SimulationLab for crisis toggles locking */}
+              <SimulationLab 
+                userRole={currentUserRole}
+                onSecurityRestriction={handleSecurityRestriction}
+              />
             </div>
           )}
 

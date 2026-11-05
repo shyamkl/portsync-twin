@@ -1,4 +1,6 @@
+// frontend/src/PortConfigPanel.jsx
 import React, { useState, createContext, useContext } from 'react';
+import { Sliders, Lock } from 'lucide-react';
 
 // --- Shared Configuration Context ---
 export const PortConfigContext = createContext();
@@ -24,8 +26,18 @@ export const PortConfigProvider = ({ children }) => {
 export const usePortConfig = () => useContext(PortConfigContext);
 
 // --- Main PortConfigPanel Component ---
-export default function PortConfigPanel({ currentTeuCount = 28450 }) {
+export default function PortConfigPanel({ currentTeuCount = 28450, userRole = 'Field Operator', onSecurityRestriction }) {
   const { config, updateConfig } = usePortConfig();
+
+  const isFieldOperator = userRole === 'Field Operator';
+
+  const handleSliderChange = (key, value) => {
+    if (isFieldOperator) {
+      if (onSecurityRestriction) onSecurityRestriction();
+      return;
+    }
+    updateConfig(key, value);
+  };
 
   // Dynamic calculations for the capacity meter
   const occupancyPercentage = Math.min(
@@ -54,11 +66,13 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
       boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
       maxWidth: '480px',
       margin: '0 auto',
+      opacity: isFieldOperator ? 0.75 : 1,
+      transition: 'opacity 0.2s ease',
     },
     header: {
       display: 'flex',
       alignItems: 'center',
-      justifyConstraint: 'space-between',
+      justifyContent: 'space-between',
       marginBottom: '18px',
     },
     title: {
@@ -71,6 +85,24 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
       display: 'flex',
       alignItems: 'center',
       gap: '8px',
+    },
+    statusContainer: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+    },
+    lockBadge: {
+      fontSize: '10px',
+      fontWeight: '700',
+      padding: '2px 6px',
+      borderRadius: '4px',
+      backgroundColor: 'rgba(239, 68, 68, 0.15)',
+      color: '#f87171',
+      border: '1px solid rgba(239, 68, 68, 0.4)',
+      display: 'flex',
+      alignItems: 'center',
+      gap: '4px',
+      textTransform: 'uppercase',
     },
     statusBadge: {
       fontSize: '11px',
@@ -120,7 +152,7 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
       backgroundColor: '#111726',
       padding: '12px',
       borderRadius: '6px',
-      border: '1px solid #1e293b',
+      border: isFieldOperator ? '1px dashed #334155' : '1px solid #1e293b',
     },
     labelRow: {
       display: 'flex',
@@ -137,7 +169,7 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
     slider: {
       width: '100%',
       accentColor: '#38bdf8',
-      cursor: 'pointer',
+      cursor: isFieldOperator ? 'not-allowed' : 'pointer',
       margin: '4px 0 0 0',
     },
     subText: {
@@ -156,9 +188,16 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
         <h3 style={styles.title}>
           <span style={{ fontSize: '8px', color: currentColor }}>●</span> Dynamic Threshold Manager
         </h3>
-        <span style={styles.statusBadge}>
-          {occupancyPercentage >= 88 ? 'CRITICAL' : occupancyPercentage >= 70 ? 'WARNING' : 'OPTIMAL'}
-        </span>
+        <div style={styles.statusContainer}>
+          {isFieldOperator && (
+            <span style={styles.lockBadge}>
+              <Lock size={10} /> Locked
+            </span>
+          )}
+          <span style={styles.statusBadge}>
+            {occupancyPercentage >= 88 ? 'CRITICAL' : occupancyPercentage >= 70 ? 'WARNING' : 'OPTIMAL'}
+          </span>
+        </div>
       </div>
 
       {/* Dynamic Visual Capacity Progress Meter */}
@@ -187,8 +226,9 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
             min="10000"
             max="50000"
             step="500"
+            disabled={isFieldOperator}
             value={config.maxTeuCapacity}
-            onChange={(e) => updateConfig('maxTeuCapacity', e.target.value)}
+            onChange={(e) => handleSliderChange('maxTeuCapacity', e.target.value)}
             style={styles.slider}
           />
           <div style={styles.subText}>
@@ -208,8 +248,9 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
             min="12"
             max="72"
             step="1"
+            disabled={isFieldOperator}
             value={config.criticalDwellHours}
-            onChange={(e) => updateConfig('criticalDwellHours', e.target.value)}
+            onChange={(e) => handleSliderChange('criticalDwellHours', e.target.value)}
             style={styles.slider}
           />
           <div style={styles.subText}>
@@ -229,8 +270,9 @@ export default function PortConfigPanel({ currentTeuCount = 28450 }) {
             min="0.5"
             max="3.0"
             step="0.1"
+            disabled={isFieldOperator}
             value={config.reeferTempVariance}
-            onChange={(e) => updateConfig('reeferTempVariance', e.target.value)}
+            onChange={(e) => handleSliderChange('reeferTempVariance', e.target.value)}
             style={styles.slider}
           />
           <div style={styles.subText}>

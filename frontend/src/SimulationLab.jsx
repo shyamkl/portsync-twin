@@ -1,6 +1,8 @@
+// frontend/src/SimulationLab.jsx
 import React, { useState } from 'react';
+import { Lock, ShieldAlert } from 'lucide-react';
 
-export default function SimulationLab() {
+export default function SimulationLab({ userRole = 'Field Operator', onSecurityRestriction }) {
   const [disruptions, setDisruptions] = useState({
     customs: false,
     rail: false,
@@ -10,10 +12,16 @@ export default function SimulationLab() {
   const [loadFactor, setLoadFactor] = useState(70);
   const [apiStatus, setApiStatus] = useState({ loading: false, error: null });
 
+  const isFieldOperator = userRole === 'Field Operator';
+
   const toggleDisruption = async (key) => {
+    if (isFieldOperator) {
+      if (onSecurityRestriction) onSecurityRestriction();
+      return;
+    }
+
     const nextState = !disruptions[key];
     
-    // Map the UI state keys to the expected backend disruption_key payload values
     let backendKey = key;
     if (key === 'customs') {
       backendKey = 'customs_outage';
@@ -39,38 +47,42 @@ export default function SimulationLab() {
         throw new Error(`Server returned status ${response.status}`);
       }
 
-      // If successful, update local UI state
       setDisruptions((prev) => ({ ...prev, [key]: nextState }));
       setApiStatus({ loading: false, error: null });
     } catch (err) {
       console.error('Failed to sync simulation toggle with backend:', err);
-      // Fallback/opt-in local update or display error warning banner
       setApiStatus({ loading: false, error: 'Backend sync failed. Local state unchanged.' });
     }
+  };
+
+  const handleSliderChange = (e) => {
+    if (isFieldOperator) {
+      if (onSecurityRestriction) onSecurityRestriction();
+      return;
+    }
+    setLoadFactor(Number(e.target.value));
   };
 
   const activeCount = Object.values(disruptions).filter(Boolean).length;
   const isAnyActive = activeCount > 0;
 
-  // Calculate dynamic risk score based on load factor and active bottleneck counts
   const rawRiskScore = (loadFactor / 10) + activeCount * 2.5;
   let riskLevel = 'Low';
-  let riskColor = '#10b981'; // Green
+  let riskColor = '#10b981';
 
   if (rawRiskScore > 16) {
     riskLevel = 'Critical';
-    riskColor = '#ef4444'; // Red
+    riskColor = '#ef4444';
   } else if (rawRiskScore > 11) {
     riskLevel = 'High';
-    riskColor = '#f97316'; // Orange
+    riskColor = '#f97316';
   } else if (rawRiskScore > 7) {
     riskLevel = 'Moderate';
-    riskColor = '#eab308'; // Yellow
+    riskColor = '#eab308';
   }
 
   return (
     <div style={styles.container}>
-      {/* Inject keyframes for the flashing alert badge */}
       <style>
         {`
           @keyframes pulseAlert {
@@ -90,29 +102,21 @@ export default function SimulationLab() {
           <p style={styles.subtitle}>Configure structural port bottlenecks and evaluate real-time terminal resilience telemetry.</p>
         </div>
         
-        {/* Dynamic Simulation Engine Status Badge */}
         <div style={{
           padding: '6px 14px',
           borderRadius: '20px',
           fontSize: '12px',
           fontWeight: '600',
           letterSpacing: '0.5px',
-          backgroundColor: isAnyActive ? 'rgba(239, 68, 68, 0.15)' : 'rgba(148, 163, 184, 0.1)',
-          border: isAnyActive ? '1px solid #ef4444' : '1px solid #475569',
-          color: isAnyActive ? '#f87171' : '#94a3b8',
-          transition: 'all 0.3s ease',
+          backgroundColor: isFieldOperator ? 'rgba(239, 68, 68, 0.1)' : isAnyActive ? 'rgba(239, 68, 68, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+          border: isFieldOperator ? '1px solid rgba(239, 68, 68, 0.3)' : isAnyActive ? '1px solid #ef4444' : '1px solid #475569',
+          color: isFieldOperator ? '#f87171' : isAnyActive ? '#f87171' : '#94a3b8',
           display: 'flex',
           alignItems: 'center',
           gap: '8px'
         }}>
-          <span style={{
-            width: '8px',
-            height: '8px',
-            backgroundColor: isAnyActive ? '#ef4444' : '#94a3b8',
-            borderRadius: '50%',
-            boxShadow: isAnyActive ? '0 0 8px #ef4444' : 'none'
-          }}></span>
-          {isAnyActive ? 'LIVE SIMULATION ENGINE ACTIVE' : 'SIMULATION ENGINE IDLE'}
+          {isFieldOperator ? <Lock size={12} /> : <span style={{ width: '8px', height: '8px', backgroundColor: isAnyActive ? '#ef4444' : '#94a3b8', borderRadius: '50%' }}></span>}
+          {isFieldOperator ? 'READ-ONLY MODE (FIELD OPERATOR)' : isAnyActive ? 'LIVE SIMULATION ENGINE ACTIVE' : 'SIMULATION ENGINE IDLE'}
         </div>
       </div>
 
@@ -124,19 +128,26 @@ export default function SimulationLab() {
 
       <div style={styles.grid}>
         {/* Disruption Control Grid */}
-        <div style={styles.card}>
-          <h3 style={styles.cardTitle}>Structural Disruption Triggers</h3>
+        <div style={{ ...styles.card, opacity: isFieldOperator ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+            <h3 style={styles.cardTitle}>Structural Disruption Triggers</h3>
+            {isFieldOperator && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#f87171', fontWeight: 700 }}>
+                <Lock size={12} /> Clearance Required
+              </span>
+            )}
+          </div>
           <p style={styles.cardDesc}>Select primary pipeline failures to simulate systemic impact on cargo throughput.</p>
 
           <div style={styles.toggleList}>
             {/* Toggle 1 */}
-            <div style={{ ...styles.toggleItem, borderColor: disruptions.customs ? '#ef4444' : '#334155' }}>
+            <div style={{ ...styles.toggleItem, borderColor: disruptions.customs ? '#ef4444' : '#334155', cursor: isFieldOperator ? 'not-allowed' : 'default' }}>
               <div style={styles.toggleInfo}>
                 <span style={styles.toggleLabel}>Customs Server Clearance Outage</span>
                 <span style={styles.toggleSub}>Simulated system failure & digital clearance backlog</span>
               </div>
               <div style={styles.toggleActionContainer}>
-                {disruptions.customs && (
+                {disruptions.customs && !isFieldOperator && (
                   <span className="flashing-badge" style={styles.alertBadge}>
                     SIMULATING ACTIVE BOTTLENECK
                   </span>
@@ -146,23 +157,24 @@ export default function SimulationLab() {
                   disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
-                    backgroundColor: disruptions.customs ? '#ef4444' : '#334155',
+                    backgroundColor: isFieldOperator ? '#334155' : disruptions.customs ? '#ef4444' : '#334155',
+                    cursor: isFieldOperator ? 'not-allowed' : 'pointer',
                     opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
-                  {disruptions.customs ? 'ON' : 'OFF'}
+                  {isFieldOperator ? <Lock size={14} /> : disruptions.customs ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>
 
             {/* Toggle 2 */}
-            <div style={{ ...styles.toggleItem, borderColor: disruptions.rail ? '#ef4444' : '#334155' }}>
+            <div style={{ ...styles.toggleItem, borderColor: disruptions.rail ? '#ef4444' : '#334155', cursor: isFieldOperator ? 'not-allowed' : 'default' }}>
               <div style={styles.toggleInfo}>
                 <span style={styles.toggleLabel}>DFC Rail Track Maintenance Operations</span>
                 <span style={styles.toggleSub}>Rail pipeline bottleneck & corridor capacity reduction</span>
               </div>
               <div style={styles.toggleActionContainer}>
-                {disruptions.rail && (
+                {disruptions.rail && !isFieldOperator && (
                   <span className="flashing-badge" style={styles.alertBadge}>
                     SIMULATING ACTIVE BOTTLENECK
                   </span>
@@ -172,23 +184,24 @@ export default function SimulationLab() {
                   disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
-                    backgroundColor: disruptions.rail ? '#ef4444' : '#334155',
+                    backgroundColor: isFieldOperator ? '#334155' : disruptions.rail ? '#ef4444' : '#334155',
+                    cursor: isFieldOperator ? 'not-allowed' : 'pointer',
                     opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
-                  {disruptions.rail ? 'ON' : 'OFF'}
+                  {isFieldOperator ? <Lock size={14} /> : disruptions.rail ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>
 
             {/* Toggle 3 */}
-            <div style={{ ...styles.toggleItem, borderColor: disruptions.gate ? '#ef4444' : '#334155' }}>
+            <div style={{ ...styles.toggleItem, borderColor: disruptions.gate ? '#ef4444' : '#334155', cursor: isFieldOperator ? 'not-allowed' : 'default' }}>
               <div style={styles.toggleInfo}>
                 <span style={styles.toggleLabel}>Gate Entry Checkpost Processing Slowdown</span>
                 <span style={styles.toggleSub}>Road logistics gridlock & truck turnaround delay</span>
               </div>
               <div style={styles.toggleActionContainer}>
-                {disruptions.gate && (
+                {disruptions.gate && !isFieldOperator && (
                   <span className="flashing-badge" style={styles.alertBadge}>
                     SIMULATING ACTIVE BOTTLENECK
                   </span>
@@ -198,11 +211,12 @@ export default function SimulationLab() {
                   disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
-                    backgroundColor: disruptions.gate ? '#ef4444' : '#334155',
+                    backgroundColor: isFieldOperator ? '#334155' : disruptions.gate ? '#ef4444' : '#334155',
+                    cursor: isFieldOperator ? 'not-allowed' : 'pointer',
                     opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
-                  {disruptions.gate ? 'ON' : 'OFF'}
+                  {isFieldOperator ? <Lock size={14} /> : disruptions.gate ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>
@@ -210,8 +224,15 @@ export default function SimulationLab() {
         </div>
 
         {/* Evacuation Load Factor & Risk Analysis Panel */}
-        <div style={styles.card}>
-          <h3 style={styles.cardTitle}>Terminal Load & Risk Assessment</h3>
+        <div style={{ ...styles.card, opacity: isFieldOperator ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+            <h3 style={styles.cardTitle}>Terminal Load & Risk Assessment</h3>
+            {isFieldOperator && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#f87171', fontWeight: 700 }}>
+                <Lock size={12} /> Slider Locked
+              </span>
+            )}
+          </div>
           <p style={styles.cardDesc}>Adjust target container yard occupancy to model stress thresholds.</p>
 
           <div style={styles.sliderContainer}>
@@ -224,9 +245,10 @@ export default function SimulationLab() {
               type="range"
               min="10"
               max="100"
+              disabled={isFieldOperator}
               value={loadFactor}
-              onChange={(e) => setLoadFactor(Number(e.target.value))}
-              style={styles.rangeInput}
+              onChange={handleSliderChange}
+              style={{ ...styles.rangeInput, cursor: isFieldOperator ? 'not-allowed' : 'pointer' }}
             />
             <div style={styles.rangeMarks}>
               <span>10% (Min)</span>
