@@ -1,5 +1,6 @@
 import asyncio
 import os
+import json
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from contextlib import asynccontextmanager
@@ -13,6 +14,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy import (
     Float, Integer, String, DateTime, Text, JSON, select, func
 )
@@ -26,16 +28,12 @@ from routers.alert_router import (
 from routers.analytics_router import analytics_router, analytics_manager
 #from services.gate_analytics import get_gate_analytics
 
-# 1. Database connection configuration with your active MySQL credentials
-#DATABASE_URL = os.getenv(
-#   "PORTSYNC_DATABASE_URL",
-#   "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
-#)
-
+#1. Database connection configuration with your active MySQL credentials
 DATABASE_URL = os.getenv(
-    "PORTSYNC_DATABASE_URL",
-    "mysql+aiomysql://root:@127.0.0.1:3306/portsync_twin",
+  "PORTSYNC_DATABASE_URL",
+  "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
 )
+
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -163,6 +161,11 @@ class TelemetryPacket(BaseModel):
 class SimulationToggleRequest(BaseModel):
     disruption_key: str = Field(..., description="Key of the disruption: customs_outage, rail_maintenance, gate_slowdown")
     state: bool = Field(..., description="Boolean activation state")
+
+
+# Pydantic model for Alert Acknowledgment requests
+class AlertAcknowledgeRequest(BaseModel):
+    acknowledged_by: str = Field(..., description="Name or identifier of the operator acknowledging the alert")
 
 
 # Global In-Memory State Dictionary for Stage 2 "What-If" Crisis Disruption Toggles
@@ -451,6 +454,52 @@ async def get_alert_history(
             for alert in records
         ],
     }            
+
+
+# POST /api/v1/alerts/{alert_id}/acknowledge
+@app.post("/api/v1/alerts/{alert_id}/acknowledge", status_code=status.HTTP_200_OK)
+async def acknowledge_alert(
+    alert_id: int,
+    payload: AlertAcknowledgeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    # Fetch the target alert entry asynchronously
+    alert = await db.get(SystemAlertLogModel, alert_id)
+    
+    if not alert:
+        raise HTTPException(
+            status_code=404, 
+            detail=f"System alert with ID {alert_id} not found."
+        )
+    
+    # Update columns
+    alert.status = "ACKNOWLEDGED"
+    alert.acknowledged_at = datetime.utcnow()
+    
+    # Update the internal JSON details field safely
+    if alert.details is None:
+        alert.details = {}
+    elif isinstance(alert.details, str):
+        try:
+            alert.details = json.loads(alert.details)
+        except Exception:
+            alert.details = {}
+            
+    alert.details["resolution_logs"] = f"Cleared by {payload.acknowledged_by}"
+    flag_modified(alert, "details")  # Ensure SQLAlchemy detects mutation inside JSON column
+    
+    # Commit transaction safely
+    await db.commit()
+    await db.refresh(alert)
+    
+    return {
+        "status": "success",
+        "message": f"Alert {alert_id} successfully acknowledged.",
+        "alert_id": alert_id,
+        "acknowledged_by": payload.acknowledged_by,
+        "acknowledged_at": alert.acknowledged_at.isoformat() if alert.acknowledged_at else None
+    }
+
 
 # GET /api/v1/analytics/summary
 @app.get("/api/v1/analytics/summary")

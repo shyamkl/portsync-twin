@@ -7,6 +7,7 @@ import YardMatrix from './YardMatrix';
 import CommandMap from './CommandMap';
 import SimulationLab from './SimulationLab';
 import AnalyticsInsights from './AnalyticsInsights';
+import ContainerInventoryGrid from './ContainerInventoryGrid';
 import PortConfigPanel, { PortConfigProvider } from './PortConfigPanel';
 
 
@@ -119,6 +120,36 @@ export default function App() {
     return () => clearInterval(analyticsInterval);
   }, []);
 
+  // Fetch initial persisted alerts history from backend database on mount
+  useEffect(() => {
+    const fetchAlertHistory = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/api/v1/alerts/history');
+        if (response.ok) {
+          const data = await response.json();
+          if (data && Array.isArray(data.alerts)) {
+            const formattedAlerts = data.alerts.map(alert => ({
+              id: alert.id,
+              title: `[${alert.priority}] ${alert.alert_type}`,
+              message: alert.message,
+              containerId: alert.container_id || alert.asset_id || "UNKNOWN",
+              timestamp: alert.created_at,
+              severity: alert.priority ? alert.priority.toUpperCase() : 'CRITICAL',
+              targetTemp: alert.details?.target_temp || '-20.0°C',
+              temp: alert.details?.temperature_c ? `+${alert.details.temperature_c}°C` : '+4.2°C',
+              acknowledged: alert.status === 'ACKNOWLEDGED'
+            }));
+            setNotificationsHistory(formattedAlerts);
+          }
+        }
+      } catch (err) {
+        console.warn("Could not fetch alert history from backend database:", err);
+      }
+    };
+
+    fetchAlertHistory();
+  }, []);
+
   // Global Background WebSocket Connection Listener & Audio Chime Trigger
   useEffect(() => {
     const connectWebSocket = () => {
@@ -139,14 +170,14 @@ export default function App() {
           try {
             const alertData = JSON.parse(event.data);
             
-            const notificationId = alertData.event_id || Date.now();
+            const notificationId = alertData.id || alertData.event_id || Date.now();
             const severity = alertData.priority ? alertData.priority.toUpperCase() : 'CRITICAL';
             
             const newNotification = {
               id: notificationId,
               title: alertData.priority ? `[${alertData.priority}] REEFER ANOMALY` : "CRITICAL ALERT",
               message: alertData.message || "Temperature disruption detected on reefer container.",
-              containerId: alertData.container_id || "UNKNOWN",
+              containerId: alertData.container_id || alertData.asset_id || "UNKNOWN",
               timestamp: alertData.timestamp || new Date().toISOString(),
               severity: severity,
               targetTemp: alertData.target_temp || '-20.0°C',
@@ -154,7 +185,11 @@ export default function App() {
               acknowledged: false
             };
 
-            setNotificationsHistory((prev) => [newNotification, ...prev]);
+            setNotificationsHistory((prev) => {
+              // Avoid duplicates if ID already exists
+              if (prev.some(item => item.id === newNotification.id)) return prev;
+              return [newNotification, ...prev];
+            });
 
             if (newNotification.severity === 'CRITICAL' && !audioMutedRef.current) {
               playCriticalAlarmTone();
@@ -205,12 +240,57 @@ export default function App() {
     setLiveNotifications((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const toggleAcknowledgeAlert = (id) => {
-    setNotificationsHistory((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, acknowledged: !item.acknowledged } : item
-      )
-    );
+  const toggleAcknowledgeAlert = async (id) => {
+    try {
+      // If the alert ID is a temporary client-side timestamp, update local state directly
+      if (typeof id === 'number' && id > 1000000000000) {
+        setNotificationsHistory((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, acknowledged: true } : item
+          )
+        );
+        return;
+      }
+
+      // Fire the network command directly to our custom backend endpoint route
+      const response = await fetch(`http://localhost:8000/api/v1/alerts/${id}/acknowledge`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          acknowledged_by: currentUserRole
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log("📡 Backend Acknowledgment Confirmed:", data);
+
+        // Instantly update our local frontend array state so the card dims out smoothly
+        setNotificationsHistory((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, acknowledged: true } : item
+          )
+        );
+      } else {
+        console.error("⚠️ Server rejected acknowledgment:", response.status);
+        // Fallback local update for UI responsiveness
+        setNotificationsHistory((prev) =>
+          prev.map((item) =>
+            item.id === id ? { ...item, acknowledged: true } : item
+          )
+        );
+      }
+    } catch (err) {
+      console.error("❌ Failed to transmit alert acknowledgment over HTTP pipe:", err);
+      // Fallback local update so button click always responds visually
+      setNotificationsHistory((prev) =>
+        prev.map((item) =>
+          item.id === id ? { ...item, acknowledged: true } : item
+        )
+      );
+    }
   };
 
   const clearAllNotifications = () => {
@@ -273,7 +353,7 @@ export default function App() {
         padding: 0,
         position: 'relative'
       }}>
-        {/* Requirement 4: Security Exception Flashing Red Banner Notification Toast */}
+        {/* Security Exception Flashing Red Banner Notification Toast */}
         {securityToast && (
           <div style={{
             position: 'fixed',
@@ -425,6 +505,29 @@ export default function App() {
               </button>
 
               <button
+                onClick={() => setActiveTab('inventory')}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  width: '100%',
+                  padding: '12px 14px',
+                  backgroundColor: activeTab === 'inventory' ? '#131c31' : 'transparent',
+                  color: activeTab === 'inventory' ? '#38bdf8' : '#94a3b8',
+                  border: 'none',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  fontSize: '0.9rem',
+                  textAlign: 'left',
+                  borderLeft: activeTab === 'inventory' ? '3px solid #38bdf8' : '3px solid transparent',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                Container Inventory
+              </button>
+
+              <button
                 onClick={() => setActiveTab('yardMatrix')}
                 style={{
                   display: 'flex',
@@ -527,7 +630,7 @@ export default function App() {
           padding: '24px 28px',
           boxSizing: 'border-box'
         }}>
-          {/* Top Header Bar with RBAC Active Session Profile Widget, Operations Notification Hub Trigger & Audit Export */}
+          {/* Top Header Bar */}
           <div style={{
             display: 'flex',
             justifyContent: 'space-between',
@@ -535,7 +638,7 @@ export default function App() {
             marginBottom: '16px',
             flexShrink: 0
           }}>
-            {/* Requirement 2: Active Session Profile Dropdown Selector Widget */}
+            {/* Active Session Profile Dropdown Selector Widget */}
             <div style={{
               display: 'flex',
               alignItems: 'center',
@@ -577,7 +680,6 @@ export default function App() {
 
             {/* Right Action Controls */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              {/* Network Crisis Simulation Toggle */}
               <button
                 onClick={() => {
                   if (currentUserRole === 'Field Operator') {
@@ -605,7 +707,6 @@ export default function App() {
                 <span>{isDisruptionActive ? 'Crisis Active' : 'Simulate Network Crisis'}</span>
               </button>
 
-              {/* Requirement 3: Export Audit Log download button with lock state */}
               <button
                 onClick={exportAuditLogCSV}
                 title={currentUserRole === 'Field Operator' ? 'Locked: Administrative Elevation Required' : 'Download System Operational Audit Log CSV'}
@@ -629,7 +730,6 @@ export default function App() {
                 <span>Export Audit Log</span>
               </button>
 
-              {/* Audio Alarm Mute/Unmute Toggle Button */}
               <button
                 onClick={() => setAudioMuted((prev) => !prev)}
                 title={audioMuted ? 'Unmute Critical Alarms' : 'Mute Critical Alarms'}
@@ -652,7 +752,6 @@ export default function App() {
                 <span>{audioMuted ? 'Alarms Muted' : 'Audio Armed'}</span>
               </button>
 
-              {/* Operations Notification Hub Trigger Button with Bell & Badge */}
               <button
                 onClick={() => setIsSidebarOpen(true)}
                 style={{
@@ -716,7 +815,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* In-View Alert Summary Banner */}
               {alerts.length > 0 && (
                 <div style={{
                   backgroundColor: 'rgba(225, 29, 72, 0.15)',
@@ -740,7 +838,6 @@ export default function App() {
                 </div>
               )}
 
-              {/* Quick Status Cards Row */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '16px', marginBottom: '20px', flexShrink: 0 }}>
                 <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '16px' }}>
                   <span style={{ fontSize: '0.8rem', color: '#94a3b8' }}>Active Vessels</span>
@@ -769,7 +866,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Terminal Spatial Overlay Map Component (Always on Top) */}
               <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '12px', marginBottom: '20px', flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: '450px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', paddingLeft: '4px', paddingRight: '4px' }}>
                   <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#38bdf8' }}>Terminal Spatial Overlay (JNPT Sector)</h3>
@@ -780,12 +876,10 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Network Infrastructure Telemetry Diagnostics Panel (Comes after Terminal Spatial Overlay) */}
               <div style={{ marginBottom: '20px', flexShrink: 0 }}>
                 <NetworkDiagnostics isDisruptionActive={isDisruptionActive} />
               </div>
 
-              {/* PortConfigPanel Card (Passing RBAC props for threshold sliders locking) */}
               <div style={{ marginBottom: '20px', flexShrink: 0 }}>
                 <PortConfigPanel 
                   currentTeuCount={28450} 
@@ -796,13 +890,18 @@ export default function App() {
             </div>
           )}
 
+          {activeTab === 'inventory' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
+              <ContainerInventoryGrid />
+            </div>
+          )}
+
           {activeTab === 'yardMatrix' && (
             <YardMatrix />
           )}
 
           {activeTab === 'simulationLab' && (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflowY: 'auto' }}>
-              {/* Passing RBAC props to SimulationLab for crisis toggles locking */}
               <SimulationLab 
                 userRole={currentUserRole}
                 onSecurityRestriction={handleSecurityRestriction}
@@ -848,7 +947,6 @@ export default function App() {
           transform: isSidebarOpen ? 'translateX(0)' : 'translateX(100%)',
           transition: 'transform 0.3s cubic-bezier(0.16, 1, 0.3, 1)'
         }}>
-          {/* Sidebar Header */}
           <div style={{
             padding: '20px',
             borderBottom: '1px solid #1e293b',
@@ -882,7 +980,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* Sidebar Controls Bar */}
           <div style={{
             padding: '12px 20px',
             backgroundColor: '#060913',
@@ -911,7 +1008,6 @@ export default function App() {
             )}
           </div>
 
-          {/* Alerts List Inside Hub */}
           <div style={{
             flex: 1,
             overflowY: 'auto',
@@ -954,7 +1050,6 @@ export default function App() {
                       transition: 'all 0.2s ease-in-out'
                     }}
                   >
-                    {/* Severity Tag & Timestamp */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                       <span style={{
                         display: 'inline-flex',
@@ -978,7 +1073,6 @@ export default function App() {
                       </span>
                     </div>
 
-                    {/* Alert Content */}
                     <div style={{ marginBottom: '10px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
                         <span style={{ fontSize: '0.85rem', fontWeight: 700, color: '#f8fafc' }}>
@@ -993,7 +1087,6 @@ export default function App() {
                       </p>
                     </div>
 
-                    {/* Interactive Acknowledge Button */}
                     <div style={{ display: 'flex', justifyContent: 'flex-end', borderTop: '1px solid #1e293b', paddingTop: '8px' }}>
                       <button
                         onClick={() => toggleAcknowledgeAlert(alert.id)}

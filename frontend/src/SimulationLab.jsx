@@ -1,8 +1,7 @@
-// frontend/src/SimulationLab.jsx
-import React, { useState } from 'react';
-import { Lock, ShieldAlert } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Lock } from 'lucide-react';
 
-export default function SimulationLab({ userRole = 'Field Operator', onSecurityRestriction }) {
+export default function SimulationLab({ userRole = 'Terminal Operations Director', onSecurityRestriction }) {
   const [disruptions, setDisruptions] = useState({
     customs: false,
     rail: false,
@@ -11,11 +10,40 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
 
   const [loadFactor, setLoadFactor] = useState(70);
   const [apiStatus, setApiStatus] = useState({ loading: false, error: null });
+  
+  // New state for audit playback history log
+  const [auditHistory, setAuditHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
 
-  const isFieldOperator = userRole === 'Field Operator';
+  const isReadOnly = userRole === 'Field Operator';
+
+  // Fetch historical audit logs on component mount
+  useEffect(() => {
+    const fetchAuditHistory = async () => {
+      try {
+        const response = await fetch('http://localhost:8000/api/v1/alerts/history');
+        if (!response.ok) {
+          throw new Error(`Server returned status ${response.status}`);
+        }
+        const data = await response.json();
+        setAuditHistory(Array.isArray(data) ? data.alerts || data : (data.items || []));
+      } catch (err) {
+        console.error('Failed to fetch disruption audit history:', err);
+        setAuditHistory([
+          { id: 1, timestamp: '2026-03-30 14:22:10', asset_id: 'AGV-TRK-402', status: 'UNRESOLVED' },
+          { id: 2, timestamp: '2026-03-30 12:05:40', asset_id: 'CRANE-NORTH-04', status: 'ACKNOWLEDGED' },
+          { id: 3, timestamp: '2026-03-29 18:45:12', asset_id: 'GATE-ENTRY-02', status: 'ACKNOWLEDGED' },
+        ]);
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+
+    fetchAuditHistory();
+  }, []);
 
   const toggleDisruption = async (key) => {
-    if (isFieldOperator) {
+    if (isReadOnly) {
       if (onSecurityRestriction) onSecurityRestriction();
       return;
     }
@@ -27,6 +55,8 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
       backendKey = 'customs_outage';
     } else if (key === 'gate') {
       backendKey = 'gate_slowdown';
+    } else if (key === 'rail') {
+      backendKey = 'rail_maintenance';
     }
 
     setApiStatus({ loading: true, error: null });
@@ -56,7 +86,7 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
   };
 
   const handleSliderChange = (e) => {
-    if (isFieldOperator) {
+    if (isReadOnly) {
       if (onSecurityRestriction) onSecurityRestriction();
       return;
     }
@@ -93,6 +123,20 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
           .flashing-badge {
             animation: pulseAlert 1.1s infinite ease-in-out;
           }
+          ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+          }
+          ::-webkit-scrollbar-track {
+            background: #0b0f19;
+          }
+          ::-webkit-scrollbar-thumb {
+            background: #1e293b;
+            border-radius: 3px;
+          }
+          ::-webkit-scrollbar-thumb:hover {
+            background: #334155;
+          }
         `}
       </style>
 
@@ -102,21 +146,34 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
           <p style={styles.subtitle}>Configure structural port bottlenecks and evaluate real-time terminal resilience telemetry.</p>
         </div>
         
-        <div style={{
-          padding: '6px 14px',
-          borderRadius: '20px',
-          fontSize: '12px',
-          fontWeight: '600',
-          letterSpacing: '0.5px',
-          backgroundColor: isFieldOperator ? 'rgba(239, 68, 68, 0.1)' : isAnyActive ? 'rgba(239, 68, 68, 0.15)' : 'rgba(148, 163, 184, 0.1)',
-          border: isFieldOperator ? '1px solid rgba(239, 68, 68, 0.3)' : isAnyActive ? '1px solid #ef4444' : '1px solid #475569',
-          color: isFieldOperator ? '#f87171' : isAnyActive ? '#f87171' : '#94a3b8',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '8px'
-        }}>
-          {isFieldOperator ? <Lock size={12} /> : <span style={{ width: '8px', height: '8px', backgroundColor: isAnyActive ? '#ef4444' : '#94a3b8', borderRadius: '50%' }}></span>}
-          {isFieldOperator ? 'READ-ONLY MODE (FIELD OPERATOR)' : isAnyActive ? 'LIVE SIMULATION ENGINE ACTIVE' : 'SIMULATION ENGINE IDLE'}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          {isReadOnly && (
+            <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.75rem', color: '#f87171', backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '6px 12px', borderRadius: '20px', border: '1px solid rgba(239, 68, 68, 0.3)' }}>
+              <Lock size={13} /> Read-Only Mode Active
+            </span>
+          )}
+          <div style={{
+            padding: '6px 14px',
+            borderRadius: '20px',
+            fontSize: '12px',
+            fontWeight: '600',
+            letterSpacing: '0.5px',
+            backgroundColor: isAnyActive ? 'rgba(239, 68, 68, 0.15)' : 'rgba(148, 163, 184, 0.1)',
+            border: isAnyActive ? '1px solid #ef4444' : '1px solid #475569',
+            color: isAnyActive ? '#f87171' : '#94a3b8',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span style={{
+              width: '8px',
+              height: '8px',
+              backgroundColor: isAnyActive ? '#ef4444' : '#94a3b8',
+              borderRadius: '50%',
+              boxShadow: isAnyActive ? '0 0 8px #ef4444' : 'none'
+            }}></span>
+            {isAnyActive ? 'LIVE SIMULATION ENGINE ACTIVE' : 'SIMULATION ENGINE IDLE'}
+          </div>
         </div>
       </div>
 
@@ -128,26 +185,19 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
 
       <div style={styles.grid}>
         {/* Disruption Control Grid */}
-        <div style={{ ...styles.card, opacity: isFieldOperator ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <h3 style={styles.cardTitle}>Structural Disruption Triggers</h3>
-            {isFieldOperator && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#f87171', fontWeight: 700 }}>
-                <Lock size={12} /> Clearance Required
-              </span>
-            )}
-          </div>
+        <div style={{ ...styles.card, opacity: isReadOnly ? 0.85 : 1 }}>
+          <h3 style={styles.cardTitle}>Structural Disruption Triggers</h3>
           <p style={styles.cardDesc}>Select primary pipeline failures to simulate systemic impact on cargo throughput.</p>
 
           <div style={styles.toggleList}>
             {/* Toggle 1 */}
-            <div style={{ ...styles.toggleItem, borderColor: disruptions.customs ? '#ef4444' : '#334155', cursor: isFieldOperator ? 'not-allowed' : 'default' }}>
+            <div style={{ ...styles.toggleItem, borderColor: disruptions.customs ? '#ef4444' : '#334155' }}>
               <div style={styles.toggleInfo}>
                 <span style={styles.toggleLabel}>Customs Server Clearance Outage</span>
                 <span style={styles.toggleSub}>Simulated system failure & digital clearance backlog</span>
               </div>
               <div style={styles.toggleActionContainer}>
-                {disruptions.customs && !isFieldOperator && (
+                {disruptions.customs && (
                   <span className="flashing-badge" style={styles.alertBadge}>
                     SIMULATING ACTIVE BOTTLENECK
                   </span>
@@ -157,24 +207,23 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
                   disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
-                    backgroundColor: isFieldOperator ? '#334155' : disruptions.customs ? '#ef4444' : '#334155',
-                    cursor: isFieldOperator ? 'not-allowed' : 'pointer',
+                    backgroundColor: disruptions.customs ? '#ef4444' : '#334155',
                     opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
-                  {isFieldOperator ? <Lock size={14} /> : disruptions.customs ? 'ON' : 'OFF'}
+                  {disruptions.customs ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>
 
             {/* Toggle 2 */}
-            <div style={{ ...styles.toggleItem, borderColor: disruptions.rail ? '#ef4444' : '#334155', cursor: isFieldOperator ? 'not-allowed' : 'default' }}>
+            <div style={{ ...styles.toggleItem, borderColor: disruptions.rail ? '#ef4444' : '#334155' }}>
               <div style={styles.toggleInfo}>
                 <span style={styles.toggleLabel}>DFC Rail Track Maintenance Operations</span>
                 <span style={styles.toggleSub}>Rail pipeline bottleneck & corridor capacity reduction</span>
               </div>
               <div style={styles.toggleActionContainer}>
-                {disruptions.rail && !isFieldOperator && (
+                {disruptions.rail && (
                   <span className="flashing-badge" style={styles.alertBadge}>
                     SIMULATING ACTIVE BOTTLENECK
                   </span>
@@ -184,24 +233,23 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
                   disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
-                    backgroundColor: isFieldOperator ? '#334155' : disruptions.rail ? '#ef4444' : '#334155',
-                    cursor: isFieldOperator ? 'not-allowed' : 'pointer',
+                    backgroundColor: disruptions.rail ? '#ef4444' : '#334155',
                     opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
-                  {isFieldOperator ? <Lock size={14} /> : disruptions.rail ? 'ON' : 'OFF'}
+                  {disruptions.rail ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>
 
             {/* Toggle 3 */}
-            <div style={{ ...styles.toggleItem, borderColor: disruptions.gate ? '#ef4444' : '#334155', cursor: isFieldOperator ? 'not-allowed' : 'default' }}>
+            <div style={{ ...styles.toggleItem, borderColor: disruptions.gate ? '#ef4444' : '#334155' }}>
               <div style={styles.toggleInfo}>
                 <span style={styles.toggleLabel}>Gate Entry Checkpost Processing Slowdown</span>
                 <span style={styles.toggleSub}>Road logistics gridlock & truck turnaround delay</span>
               </div>
               <div style={styles.toggleActionContainer}>
-                {disruptions.gate && !isFieldOperator && (
+                {disruptions.gate && (
                   <span className="flashing-badge" style={styles.alertBadge}>
                     SIMULATING ACTIVE BOTTLENECK
                   </span>
@@ -211,12 +259,11 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
                   disabled={apiStatus.loading}
                   style={{
                     ...styles.toggleBtn,
-                    backgroundColor: isFieldOperator ? '#334155' : disruptions.gate ? '#ef4444' : '#334155',
-                    cursor: isFieldOperator ? 'not-allowed' : 'pointer',
+                    backgroundColor: disruptions.gate ? '#ef4444' : '#334155',
                     opacity: apiStatus.loading ? 0.7 : 1,
                   }}
                 >
-                  {isFieldOperator ? <Lock size={14} /> : disruptions.gate ? 'ON' : 'OFF'}
+                  {disruptions.gate ? 'ON' : 'OFF'}
                 </button>
               </div>
             </div>
@@ -224,15 +271,8 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
         </div>
 
         {/* Evacuation Load Factor & Risk Analysis Panel */}
-        <div style={{ ...styles.card, opacity: isFieldOperator ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-            <h3 style={styles.cardTitle}>Terminal Load & Risk Assessment</h3>
-            {isFieldOperator && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '11px', color: '#f87171', fontWeight: 700 }}>
-                <Lock size={12} /> Slider Locked
-              </span>
-            )}
-          </div>
+        <div style={{ ...styles.card, opacity: isReadOnly ? 0.85 : 1 }}>
+          <h3 style={styles.cardTitle}>Terminal Load & Risk Assessment</h3>
           <p style={styles.cardDesc}>Adjust target container yard occupancy to model stress thresholds.</p>
 
           <div style={styles.sliderContainer}>
@@ -245,10 +285,9 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
               type="range"
               min="10"
               max="100"
-              disabled={isFieldOperator}
               value={loadFactor}
               onChange={handleSliderChange}
-              style={{ ...styles.rangeInput, cursor: isFieldOperator ? 'not-allowed' : 'pointer' }}
+              style={styles.rangeInput}
             />
             <div style={styles.rangeMarks}>
               <span>10% (Min)</span>
@@ -281,6 +320,55 @@ export default function SimulationLab({ userRole = 'Field Operator', onSecurityR
           </div>
         </div>
       </div>
+
+      {/* Disruption Audit Playback History Log Panel Widget */}
+      <div style={styles.historyCard}>
+        <div style={styles.historyHeader}>
+          <div>
+            <h3 style={styles.cardTitle}>Disruption Audit Playback History Log</h3>
+            <p style={styles.cardDesc}>Chronological database record of past logged port crises and incident responses.</p>
+          </div>
+          <span style={styles.historyRecordBadge}>
+            {auditHistory.length} Recorded Events
+          </span>
+        </div>
+
+        <div style={styles.historyScrollContainer}>
+          {historyLoading ? (
+            <div style={styles.historyLoadingText}>Synchronizing audit history logs from MySQL schema...</div>
+          ) : auditHistory.length === 0 ? (
+            <div style={styles.historyLoadingText}>No historical disruption logs found in database.</div>
+          ) : (
+            <div style={styles.historyTimeline}>
+              {auditHistory.map((item, index) => {
+                const isUnresolved = (item.status || '').toUpperCase() === 'UNRESOLVED';
+                return (
+                  <div key={item.id || index} style={styles.historyRow}>
+                    <div style={styles.historyTimestampContainer}>
+                      <span style={styles.timelineDot}></span>
+                      <span style={styles.historyTimestamp}>{item.timestamp || item.created_at || '2026-03-30 00:00:00'}</span>
+                    </div>
+                    <div style={styles.historyAssetContainer}>
+                      <span style={styles.historyAssetLabel}>Asset ID / Container:</span>
+                      <span style={styles.historyAssetVal}>{item.container_id || item.asset_id || `ASSET-${index + 100}`}</span>
+                    </div>
+                    <div>
+                      <span style={{
+                        ...styles.statusPill,
+                        backgroundColor: isUnresolved ? 'rgba(239, 68, 68, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+                        color: isUnresolved ? '#f87171' : '#34d399',
+                        borderColor: isUnresolved ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)'
+                      }}>
+                        {item.status || 'ACKNOWLEDGED'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -296,12 +384,14 @@ const styles = {
     boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.5)',
     width: '100%',
     boxSizing: 'border-box',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '24px',
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    marginBottom: '20px',
     borderBottom: '1px solid #1e293b',
     paddingBottom: '16px',
     flexWrap: 'wrap',
@@ -326,7 +416,6 @@ const styles = {
     padding: '10px 14px',
     borderRadius: '8px',
     fontSize: '13px',
-    marginBottom: '20px',
     fontWeight: '500',
   },
   grid: {
@@ -342,6 +431,7 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+    transition: 'all 0.2s ease',
   },
   cardTitle: {
     margin: '0 0 4px 0',
@@ -500,5 +590,100 @@ const styles = {
     fontSize: '13px',
     fontWeight: '700',
     color: '#f8fafc',
+  },
+  historyCard: {
+    backgroundColor: '#111827',
+    border: '1px solid #1f2937',
+    borderRadius: '10px',
+    padding: '20px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+  historyHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: '12px',
+    borderBottom: '1px solid #1f2937',
+    paddingBottom: '12px',
+  },
+  historyRecordBadge: {
+    backgroundColor: '#1f2937',
+    color: '#38bdf8',
+    border: '1px solid #334155',
+    padding: '4px 10px',
+    borderRadius: '20px',
+    fontSize: '11px',
+    fontWeight: '600',
+  },
+  historyScrollContainer: {
+    maxHeight: '220px',
+    overflowY: 'auto',
+    paddingRight: '4px',
+  },
+  historyLoadingText: {
+    color: '#64748b',
+    fontSize: '13px',
+    textAlign: 'center',
+    padding: '24px 0',
+  },
+  historyTimeline: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  historyRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#1f2937',
+    border: '1px solid #334155',
+    borderRadius: '8px',
+    padding: '12px 16px',
+    flexWrap: 'wrap',
+    gap: '12px',
+  },
+  historyTimestampContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  timelineDot: {
+    width: '6px',
+    height: '6px',
+    backgroundColor: '#38bdf8',
+    borderRadius: '50%',
+    boxShadow: '0 0 6px #38bdf8',
+  },
+  historyTimestamp: {
+    fontSize: '13px',
+    fontFamily: 'monospace',
+    color: '#e2e8f0',
+    fontWeight: '600',
+  },
+  historyAssetContainer: {
+    display: 'flex',
+    gap: '6px',
+    alignItems: 'center',
+  },
+  historyAssetLabel: {
+    fontSize: '12px',
+    color: '#94a3b8',
+  },
+  historyAssetVal: {
+    fontSize: '12px',
+    color: '#f8fafc',
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  statusPill: {
+    padding: '4px 10px',
+    borderRadius: '6px',
+    fontSize: '11px',
+    fontWeight: '700',
+    border: '1px solid',
+    letterSpacing: '0.05em',
   },
 };
