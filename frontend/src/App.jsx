@@ -1,5 +1,6 @@
 // frontend/src/App.jsx
 import React, { useState, useEffect, useRef } from 'react';
+import NetworkDiagnostics from './NetworkDiagnostics';
 import { Bell, ShieldAlert, AlertTriangle, CheckCircle2, X, Volume2, VolumeX, Download, Lock, ShieldCheck, UserCheck } from 'lucide-react';
 import usePortSyncAlerts from './hooks/usePortSyncAlerts';
 import YardMatrix from './YardMatrix';
@@ -7,6 +8,7 @@ import CommandMap from './CommandMap';
 import SimulationLab from './SimulationLab';
 import AnalyticsInsights from './AnalyticsInsights';
 import PortConfigPanel, { PortConfigProvider } from './PortConfigPanel';
+
 
 /**
  * Web Audio API synthesizer helper to generate a professional dual-tone alarm pulse.
@@ -51,6 +53,9 @@ export default function App() {
   // Requirement 1: RBAC State Hook initialized to "Field Operator"
   const [currentUserRole, setCurrentUserRole] = useState('Field Operator');
   
+  // Disruption state toggle for infrastructure data transit simulations
+  const [isDisruptionActive, setIsDisruptionActive] = useState(false);
+
   // Security Exception Toast Notification State (Requirement 4)
   const [securityToast, setSecurityToast] = useState(null);
 
@@ -572,6 +577,34 @@ export default function App() {
 
             {/* Right Action Controls */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {/* Network Crisis Simulation Toggle */}
+              <button
+                onClick={() => {
+                  if (currentUserRole === 'Field Operator') {
+                    handleSecurityRestriction();
+                  } else {
+                    setIsDisruptionActive((prev) => !prev);
+                  }
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 12px',
+                  backgroundColor: isDisruptionActive ? 'rgba(239, 68, 68, 0.2)' : '#0f172a',
+                  border: isDisruptionActive ? '1px solid #ef4444' : '1px solid #334155',
+                  borderRadius: '8px',
+                  color: isDisruptionActive ? '#f87171' : '#94a3b8',
+                  cursor: 'pointer',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <AlertTriangle size={16} color={isDisruptionActive ? '#ef4444' : '#94a3b8'} />
+                <span>{isDisruptionActive ? 'Crisis Active' : 'Simulate Network Crisis'}</span>
+              </button>
+
               {/* Requirement 3: Export Audit Log download button with lock state */}
               <button
                 onClick={exportAuditLogCSV}
@@ -736,7 +769,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Terminal Spatial Overlay Map Component (Above) */}
+              {/* Terminal Spatial Overlay Map Component (Always on Top) */}
               <div style={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '10px', padding: '12px', marginBottom: '20px', flexShrink: 0, display: 'flex', flexDirection: 'column', minHeight: '450px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', paddingLeft: '4px', paddingRight: '4px' }}>
                   <h3 style={{ margin: 0, fontSize: '1.05rem', color: '#38bdf8' }}>Terminal Spatial Overlay (JNPT Sector)</h3>
@@ -745,6 +778,11 @@ export default function App() {
                 <div style={{ flex: 1, borderRadius: '8px', overflow: 'hidden', border: '1px solid #1e293b', minHeight: '380px' }}>
                   <CommandMap />
                 </div>
+              </div>
+
+              {/* Network Infrastructure Telemetry Diagnostics Panel (Comes after Terminal Spatial Overlay) */}
+              <div style={{ marginBottom: '20px', flexShrink: 0 }}>
+                <NetworkDiagnostics isDisruptionActive={isDisruptionActive} />
               </div>
 
               {/* PortConfigPanel Card (Passing RBAC props for threshold sliders locking) */}
