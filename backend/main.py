@@ -13,24 +13,29 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-from sqlalchemy import Float, Integer, String, DateTime, select, func
+from sqlalchemy import (
+    Float, Integer, String, DateTime, Text, JSON, select, func
+)
 
 # WebSocket alert router integration
-from routers.alert_router import alert_router, publish_ldb_event
+from routers.alert_router import (
+    alert_router,
+    alert_manager,
+    detect_reefer_anomaly,
+)
 from routers.analytics_router import analytics_router, analytics_manager
 #from services.gate_analytics import get_gate_analytics
 
 # 1. Database connection configuration with your active MySQL credentials
+#DATABASE_URL = os.getenv(
+#   "PORTSYNC_DATABASE_URL",
+#   "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
+#)
+
 DATABASE_URL = os.getenv(
-   "PORTSYNC_DATABASE_URL",
-   "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
+    "PORTSYNC_DATABASE_URL",
+    "mysql+aiomysql://root:@127.0.0.1:3306/portsync_twin",
 )
-
-# DATABASE_URL = os.getenv(
-#     "PORTSYNC_DATABASE_URL",
-#     "mysql+aiomysql://root:@localhost:3306/portsync_twin",
-# )
-
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
 AsyncSessionLocal = async_sessionmaker(
     bind=engine,
@@ -94,7 +99,47 @@ class PortGateLogModel(Base):
     exit_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="Processing")
 
+# SQLAlchemy ORM model: system_alerts_log
+class SystemAlertLogModel(Base):
+    __tablename__ = "system_alerts_log"
 
+    id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=True
+    )
+    alert_type: Mapped[str] = mapped_column(
+        String(50), nullable=False, index=True
+    )
+    priority: Mapped[str] = mapped_column(
+        String(20), nullable=False
+    )
+    source: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+    message: Mapped[str] = mapped_column(
+        Text, nullable=False
+    )
+    container_id: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True, index=True
+    )
+    asset_id: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True, index=True
+    )
+    event_id: Mapped[Optional[str]] = mapped_column(
+        String(100), nullable=True
+    )
+    details: Mapped[Optional[dict]] = mapped_column(
+        JSON, nullable=True
+    )
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="UNRESOLVED", index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    acknowledged_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime, nullable=True
+    )
+    
 # 2. Pydantic validation model
 class TelemetryPacket(BaseModel):
     asset_id: str = Field(
@@ -339,6 +384,74 @@ async def get_db():
         finally:
             await session.close()
 
+# GET /api/v1/alerts/history
+@app.get("/api/v1/alerts/history")
+async def get_alert_history(
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+):
+    # Validate pagination parameters.
+    if limit < 1 or limit > 500:
+        raise HTTPException(
+            status_code=400,
+            detail="Limit must be between 1 and 500.",
+        )
+
+    if offset < 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Offset cannot be negative.",
+        )
+
+    # Get total number of alerts.
+    count_stmt = select(
+        func.count()
+    ).select_from(SystemAlertLogModel)
+
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    # Retrieve newest alerts first.
+    alerts_stmt = (
+        select(SystemAlertLogModel)
+        .order_by(
+            SystemAlertLogModel.created_at.desc(),
+            SystemAlertLogModel.id.desc(),
+        )
+        .offset(offset)
+        .limit(limit)
+    )
+
+    result = await db.execute(alerts_stmt)
+    records = result.scalars().all()
+
+    return {
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "alerts": [
+            {
+                "id": alert.id,
+                "alert_type": alert.alert_type,
+                "priority": alert.priority,
+                "source": alert.source,
+                "message": alert.message,
+                "container_id": alert.container_id,
+                "asset_id": alert.asset_id,
+                "event_id": alert.event_id,
+                "details": alert.details,
+                "status": alert.status,
+                "created_at": alert.created_at.isoformat(),
+                "acknowledged_at": (
+                    alert.acknowledged_at.isoformat()
+                    if alert.acknowledged_at else None
+                ),
+            }
+            for alert in records
+        ],
+    }            
+
 # GET /api/v1/analytics/summary
 @app.get("/api/v1/analytics/summary")
 async def analytics_summary(
@@ -360,7 +473,55 @@ async def toggle_simulation_disruption(payload: SimulationToggleRequest):
             detail=f"Invalid disruption key: '{key}'. Valid options are: {list(simulation_disruptions_state.keys())}"
         )
 
-    simulation_disruptions_state[key] = state
+    previous_state = simulation_disruptions_state[key]
+
+    # Persist one alert when gate slowdown is newly activated.
+    if key == "gate_slowdown" and state and not previous_state:
+        alert_record = SystemAlertLogModel(
+            alert_type="CONGESTION_GRIDLOCK",
+            priority="CRITICAL",
+            source="simulation_toggle",
+            message="CRITICAL: Gate slowdown activated - truck traffic is in gridlock.",
+            asset_id="Truck-MH-04",
+            details={
+                "disruption_key": key,
+                "previous_state": previous_state,
+                "new_state": state,
+            },
+            status="UNRESOLVED",
+        )
+
+        try:
+            async with AsyncSessionLocal() as session:
+                session.add(alert_record)
+                await session.flush()
+                await session.commit()
+                await session.refresh(alert_record)
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to persist gridlock alert: {str(e)}",
+            )
+
+        # Update state only after successful database persistence.
+        simulation_disruptions_state[key] = state
+
+        # Broadcast the persisted alert to connected WebSocket clients.
+        await alert_manager.broadcast({
+            "type": "CONGESTION_GRIDLOCK",
+            "priority": alert_record.priority,
+            "source": alert_record.source,
+            "asset_id": alert_record.asset_id,
+            "message": alert_record.message,
+            "id": alert_record.id,
+            "status": alert_record.status,
+            "timestamp": alert_record.created_at.isoformat(),
+        })
+
+    else:
+        simulation_disruptions_state[key] = state
+
     return {
         "status": "success",
         "disruption_key": key,
@@ -535,10 +696,40 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             )
             db.add(db_record)
 
+        # Detect and persist reefer anomaly before WebSocket broadcast.
+        alert = detect_reefer_anomaly(payload)
+
+        if alert:
+            alert_record = SystemAlertLogModel(
+                alert_type="REEFER_ANOMALY",
+                priority=alert["priority"],
+                source=alert["source"],
+                message=alert["message"],
+                container_id=container_id,
+                event_id=(
+                    str(alert["event_id"])
+                    if alert.get("event_id") is not None
+                    else None
+                ),
+                details={
+                    "cargo_class": alert.get("cargo_class"),
+                    "power_status": alert.get("power_status"),
+                    "temperature_c": alert.get("temperature_c"),
+                    "reasons": alert.get("reasons", []),
+                },
+                status="UNRESOLVED",
+            )
+            db.add(alert_record)
+            await db.flush()
+
+        # Commit inventory and alert together.
         await db.commit()
-        
-        # Broadcast WebSocket alert if reefer anomaly condition matches
-        await publish_ldb_event(payload)
+
+        # Broadcast only after the database commit succeeds.
+        if alert:
+            alert["id"] = alert_record.id
+            alert["status"] = alert_record.status
+            await alert_manager.broadcast(alert)
 
         return {
             "status": "success",
