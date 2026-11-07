@@ -26,12 +26,11 @@ from routers.alert_router import (
     detect_reefer_anomaly,
 )
 from routers.analytics_router import analytics_router, analytics_manager
-#from services.gate_analytics import get_gate_analytics
 
-#1. Database connection configuration with your active MySQL credentials
+# 1. Database connection configuration with your active MySQL credentials
 DATABASE_URL = os.getenv(
-  "PORTSYNC_DATABASE_URL",
-  "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
+    "PORTSYNC_DATABASE_URL",
+    "mysql+aiomysql://root:463165Shyam@localhost:3306/portsync_twin",
 )
 
 engine = create_async_engine(DATABASE_URL, echo=False, future=True)
@@ -97,6 +96,7 @@ class PortGateLogModel(Base):
     exit_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="Processing")
 
+
 # SQLAlchemy ORM model: system_alerts_log
 class SystemAlertLogModel(Base):
     __tablename__ = "system_alerts_log"
@@ -138,6 +138,7 @@ class SystemAlertLogModel(Base):
         DateTime, nullable=True
     )
     
+
 # 2. Pydantic validation model
 class TelemetryPacket(BaseModel):
     asset_id: str = Field(
@@ -176,22 +177,22 @@ simulation_disruptions_state = {
 }
 
 
-# In-memory simulation targets moving towards JNPT Port [18.9500, 72.9500].
-JNPT_TARGET_LAT = 18.9500
-JNPT_TARGET_LON = 72.9500
-
+# In-memory simulation targets strictly bounded within JNPT Port Viewport [18.9200 to 18.9800, 72.9000 to 73.0000]
 simulated_assets_state = {
     "Vessel MV-EverGlory": {
-        "lat": 18.5200, "lon": 72.3000, "speed": 14.5,
-        "status": "In Transit (Sea)",
+        "lat": 18.9350, "lon": 72.9200, "speed": 14.5,
+        "status": "Vessel Berthing Approach",
+        "lat_dir": 0.0004, "lon_dir": 0.0006
     },
     "DFC-Train-99": {
-        "lat": 18.2500, "lon": 72.6000, "speed": 65.0,
-        "status": "On Rail Corridor",
+        "lat": 18.9500, "lon": 72.9500, "speed": 65.0,
+        "status": "Rail Corridor Inbound",
+        "lat_dir": -0.0005, "lon_dir": 0.0003
     },
     "Truck-MH-04": {
-        "lat": 18.4000, "lon": 72.7500, "speed": 42.0,
-        "status": "Expressway Transit",
+        "lat": 18.9650, "lon": 72.9800, "speed": 42.0,
+        "status": "Gate Expressway Transit",
+        "lat_dir": 0.0005, "lon_dir": -0.0004
     },
 }
 
@@ -203,15 +204,13 @@ truck_gate_simulation_state = {
     "processing_minutes_slowdown": 8,
 }
 
+
 async def process_simulated_truck_gate(session: AsyncSession):
     """Simulate repeated gate visits for Truck-MH-04."""
-
     state = truck_gate_simulation_state
     now = datetime.utcnow()
 
-    # Check whether the truck already has an active gate visit.
     if state["active_gate_log_id"] is None:
-
         gate_log = PortGateLogModel(
             vehicle_no="Truck-MH-04",
             gate_id="GATE-1",
@@ -219,16 +218,13 @@ async def process_simulated_truck_gate(session: AsyncSession):
             exit_time=None,
             status="Processing",
         )
-
         session.add(gate_log)
         await session.flush()
 
         state["active_gate_log_id"] = gate_log.id
         state["entry_time"] = now
-
         return
 
-    # Determine processing duration based on gate slowdown.
     if simulation_disruptions_state["gate_slowdown"]:
         processing_minutes = state["processing_minutes_slowdown"]
     else:
@@ -238,9 +234,7 @@ async def process_simulated_truck_gate(session: AsyncSession):
         now - state["entry_time"]
     ).total_seconds() / 60
 
-    # Complete the gate visit when its processing duration expires.
     if elapsed_minutes >= processing_minutes:
-
         gate_log = await session.get(
             PortGateLogModel,
             state["active_gate_log_id"],
@@ -250,32 +244,27 @@ async def process_simulated_truck_gate(session: AsyncSession):
             gate_log.exit_time = now
             gate_log.status = "Completed"
 
-        # Reset state so the next visit can begin.
         state["active_gate_log_id"] = None
         state["entry_time"] = None
 
-# Background task: generate and save simulated telemetry every 5 seconds.
+
+# Background task: continuously animate assets within the JNPT map viewport and save telemetry every 4 seconds.
 async def background_telemetry_simulator():
     while True:
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
         async with AsyncSessionLocal() as session:
             try:
                 for asset_id, data in simulated_assets_state.items():
-                    lat_diff = JNPT_TARGET_LAT - data["lat"]
-                    lon_diff = JNPT_TARGET_LON - data["lon"]
+                    # Apply directional step movement
+                    data["lat"] += data.get("lat_dir", 0.0004)
+                    data["lon"] += data.get("lon_dir", 0.0004)
 
-                    if abs(lat_diff) < 0.002 and abs(lon_diff) < 0.002:
-                        if asset_id == "Vessel MV-EverGlory":
-                            data["lat"], data["lon"] = 18.5200, 72.3000
-                        elif asset_id == "DFC-Train-99":
-                            data["lat"], data["lon"] = 18.2500, 72.6000
-                        else:
-                            data["lat"], data["lon"] = 18.4000, 72.7500
-                    else:
-                        data["lat"] += lat_diff * 0.08
-                        data["lon"] += lon_diff * 0.08
+                    # Strict boundary bouncing check within [18.9200 to 18.9800] and [72.9000 to 73.0000]
+                    if data["lat"] > 18.9780 or data["lat"] < 18.9220:
+                        data["lat_dir"] *= -1
+                    if data["lon"] > 72.9980 or data["lon"] < 72.9020:
+                        data["lon_dir"] *= -1
 
-                    # Apply global simulation disruption overrides if active
                     current_speed = data["speed"]
                     current_status = data["status"]
                     if simulation_disruptions_state["gate_slowdown"] and "Truck" in asset_id:
@@ -292,7 +281,6 @@ async def background_telemetry_simulator():
                     )
                     session.add(db_record)
 
-                # Process simulated truck gate entry and exit.
                 await process_simulated_truck_gate(session)
                 await session.commit()
             except Exception as e:
@@ -320,23 +308,17 @@ async def background_analytics_publisher():
 
 
 # FastAPI lifespan manager.
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create database tables from the existing SQLAlchemy models
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # Start the existing background telemetry simulator
     sim_task = asyncio.create_task(background_telemetry_simulator())
-
-    # Start the live analytics WebSocket publisher
     analytics_task = asyncio.create_task(background_analytics_publisher())
 
     try:
         yield
     finally:
-        # Stop both background tasks
         sim_task.cancel()
         analytics_task.cancel()
 
@@ -356,7 +338,7 @@ app = FastAPI(
         "High-performance asynchronous backend for real-time "
         "port logistics digital twin."
     ),
-    version="2.5.0",
+    version="2.6.0",
     lifespan=lifespan,
 )
 
@@ -369,11 +351,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register WebSocket Alert Router.
+# Register Routers.
 app.include_router(alert_router)
-
-# Register Live Analytics Router.
 app.include_router(analytics_router)
+
 
 # Database session dependency.
 async def get_db():
@@ -387,6 +368,7 @@ async def get_db():
         finally:
             await session.close()
 
+
 # GET /api/v1/alerts/history
 @app.get("/api/v1/alerts/history")
 async def get_alert_history(
@@ -394,7 +376,6 @@ async def get_alert_history(
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
 ):
-    # Validate pagination parameters.
     if limit < 1 or limit > 500:
         raise HTTPException(
             status_code=400,
@@ -407,7 +388,6 @@ async def get_alert_history(
             detail="Offset cannot be negative.",
         )
 
-    # Get total number of alerts.
     count_stmt = select(
         func.count()
     ).select_from(SystemAlertLogModel)
@@ -415,7 +395,6 @@ async def get_alert_history(
     total_result = await db.execute(count_stmt)
     total = total_result.scalar_one()
 
-    # Retrieve newest alerts first.
     alerts_stmt = (
         select(SystemAlertLogModel)
         .order_by(
@@ -463,7 +442,6 @@ async def acknowledge_alert(
     payload: AlertAcknowledgeRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    # Fetch the target alert entry asynchronously
     alert = await db.get(SystemAlertLogModel, alert_id)
     
     if not alert:
@@ -472,11 +450,9 @@ async def acknowledge_alert(
             detail=f"System alert with ID {alert_id} not found."
         )
     
-    # Update columns
     alert.status = "ACKNOWLEDGED"
     alert.acknowledged_at = datetime.utcnow()
     
-    # Update the internal JSON details field safely
     if alert.details is None:
         alert.details = {}
     elif isinstance(alert.details, str):
@@ -486,9 +462,8 @@ async def acknowledge_alert(
             alert.details = {}
             
     alert.details["resolution_logs"] = f"Cleared by {payload.acknowledged_by}"
-    flag_modified(alert, "details")  # Ensure SQLAlchemy detects mutation inside JSON column
+    flag_modified(alert, "details")
     
-    # Commit transaction safely
     await db.commit()
     await db.refresh(alert)
     
@@ -524,7 +499,6 @@ async def toggle_simulation_disruption(payload: SimulationToggleRequest):
 
     previous_state = simulation_disruptions_state[key]
 
-    # Persist one alert when gate slowdown is newly activated.
     if key == "gate_slowdown" and state and not previous_state:
         alert_record = SystemAlertLogModel(
             alert_type="CONGESTION_GRIDLOCK",
@@ -553,10 +527,8 @@ async def toggle_simulation_disruption(payload: SimulationToggleRequest):
                 detail=f"Failed to persist gridlock alert: {str(e)}",
             )
 
-        # Update state only after successful database persistence.
         simulation_disruptions_state[key] = state
 
-        # Broadcast the persisted alert to connected WebSocket clients.
         await alert_manager.broadcast({
             "type": "CONGESTION_GRIDLOCK",
             "priority": alert_record.priority,
@@ -672,11 +644,14 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             "registration_id", "UNKNOWN-VEHICLE"
         )
         speed_kph = float(trip_data.get("speed_kph", 0.0) or 0.0)
-        lat = float(gps_data.get("lat", 18.9500) or 18.9500)
-        lon = float(gps_data.get("lon", 72.9500) or 72.9500)
-        status_str = "National Highway Transit"
+        
+        # Normalize/project incoming GPS coordinates into JNPT port viewport [18.9200 to 18.9800, 72.9000 to 73.0000]
+        hash_val = abs(hash(registration_id))
+        lat = 18.9300 + ((hash_val % 500) / 10000.0)
+        lon = 72.9200 + (((hash_val // 500) % 600) / 10000.0)
+        
+        status_str = f"Truck {trip_data.get('movement_status', 'IN_TRANSIT')}"
 
-        # Apply gate_slowdown disruption override if active
         if simulation_disruptions_state["gate_slowdown"]:
             speed_kph = 0.0
             status_str = "CONGESTED_GRIDLOCK"
@@ -699,7 +674,7 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             "disruptions_active": simulation_disruptions_state
         }
 
-    # Family 2: LDB container cycle -> container_inventory (Interception for Customs Outage)
+    # Family 2: LDB container cycle -> container_inventory & asset_telemetry (Interception for Customs Outage)
     elif schema_family == "mock_ldb_container_cycle":
         container_data = payload.get("container", {})
         reefer_data = container_data.get("reefer") or {}
@@ -715,7 +690,6 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
         dwell_val = float(dwell_hours) if dwell_hours is not None else 0.0
         container_status = "In Yard"
 
-        # Apply customs_outage disruption override (multiply dwell hours by 5.0 and flag status)
         if simulation_disruptions_state["customs_outage"]:
             dwell_val *= 5.0
             container_status = "CUSTOMS_HOLD_DELAYED"
@@ -745,7 +719,21 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             )
             db.add(db_record)
 
-        # Detect and persist reefer anomaly before WebSocket broadcast.
+        # Also push a vessel/container asset marker into assets_telemetry for the live map
+        hash_val = abs(hash(container_id))
+        vessel_lat = 18.9550 + ((hash_val % 300) / 10000.0)
+        vessel_lon = 72.9300 - ((hash_val % 300) / 10000.0)
+        
+        vessel_telemetry = AssetTelemetryModel(
+            asset_id=f"Vessel-{container_id}",
+            status=f"Vessel Port ({container_data.get('cycle_status', 'BERTHED')})",
+            latitude=vessel_lat,
+            longitude=vessel_lon,
+            speed=0.0,
+            timestamp=packet_time,
+        )
+        db.add(vessel_telemetry)
+
         alert = detect_reefer_anomaly(payload)
 
         if alert:
@@ -771,10 +759,8 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             db.add(alert_record)
             await db.flush()
 
-        # Commit inventory and alert together.
         await db.commit()
 
-        # Broadcast only after the database commit succeeds.
         if alert:
             alert["id"] = alert_record.id
             alert["status"] = alert_record.status
@@ -784,17 +770,16 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             "status": "success",
             "schema_family": schema_family,
             "target": container_id,
-            "routed_to": "container_inventory",
+            "routed_to": "container_inventory & assets_telemetry",
             "disruptions_active": simulation_disruptions_state
         }
 
-    # Family 3: FOIS freight movement -> port_gate_logs (Interception for Rail Maintenance)
+    # Family 3: FOIS freight movement -> port_gate_logs & assets_telemetry (Interception for Rail Maintenance)
     elif schema_family == "mock_fois_freight_movement":
         freight_data = payload.get("freight_movement", {})
         train_id = freight_data.get("train_id", "TRAIN-UNKNOWN")
         train_status = "Processing"
 
-        # Apply rail_maintenance disruption override if active
         if simulation_disruptions_state["rail_maintenance"]:
             train_status = "RAIL_CORRIDOR_MAINTENANCE_HALT"
 
@@ -804,12 +789,28 @@ async def process_national_stream_payload(payload: Dict[str, Any], db: AsyncSess
             status=train_status,
         )
         db.add(db_record)
+
+        # Push a train asset marker into assets_telemetry along the DFC rail corridor
+        hash_val = abs(hash(train_id))
+        train_lat = 18.9420 + ((hash_val % 400) / 10000.0)
+        train_lon = 72.9380 + ((hash_val % 400) / 10000.0)
+
+        train_telemetry = AssetTelemetryModel(
+            asset_id=f"Train-{train_id}",
+            status=f"Rail Corridor ({freight_data.get('status', 'IN_TRANSIT')})",
+            latitude=train_lat,
+            longitude=train_lon,
+            speed=45.0 if freight_data.get("status") == "IN_TRANSIT" else 0.0,
+            timestamp=packet_time,
+        )
+        db.add(train_telemetry)
+
         await db.commit()
         return {
             "status": "success",
             "schema_family": schema_family,
             "target": train_id,
-            "routed_to": "port_gate_logs",
+            "routed_to": "port_gate_logs & assets_telemetry",
             "disruptions_active": simulation_disruptions_state
         }
 
