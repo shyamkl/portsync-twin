@@ -37,19 +37,19 @@ const truckIcon = createCyberIcon(truckSvg, '#39ff14');    // Neon Green
 
 // Robust helper function inspecting ID, status, and type for accurate asset mapping
 const getIconForAsset = (asset) => {
-  const idStr = (asset.id || asset.asset_id || '').toLowerCase();
+  const assetIdStr = (asset.asset_id || asset.id || '').toLowerCase();
   const statusStr = (asset.status || '').toLowerCase();
   const typeStr = (asset.type || '').toLowerCase();
 
   if (
-    idStr.includes('train') || idStr.includes('rail') ||
+    assetIdStr.includes('train') || assetIdStr.includes('rail') ||
     statusStr.includes('train') || statusStr.includes('rail') || statusStr.includes('dfc') ||
     typeStr.includes('train') || typeStr.includes('rail') || typeStr.includes('dfc')
   ) {
     return trainIcon;
   }
   if (
-    idStr.includes('truck') || idStr.includes('haulage') ||
+    assetIdStr.includes('truck') || assetIdStr.includes('haulage') ||
     statusStr.includes('truck') || statusStr.includes('haulage') || statusStr.includes('gate') || statusStr.includes('trailer') ||
     typeStr.includes('truck') || typeStr.includes('haulage')
   ) {
@@ -62,8 +62,8 @@ export default function CommandMap() {
   // Center: JNPT Port Coordinates
   const jnptCoords = [18.9500, 72.9500];
 
-  // State to hold live assets, connection/fallback status, and simulation crisis toggle
-  const [assets, setAssets] = useState([]);
+  // State hook variable for live assets and connection/simulation toggles
+  const [liveAssets, setLiveAssets] = useState([]);
   const [isLive, setIsLive] = useState(false);
   const [crisisBottleneck, setCrisisBottleneck] = useState(false);
 
@@ -71,6 +71,7 @@ export default function CommandMap() {
   const fallbackAssets = [
     {
       id: 'vessel-01',
+      asset_id: 'vessel-01',
       name: 'MV EverGlory (Offline Fallback)',
       type: 'Container Vessel',
       latitude: 18.9580,
@@ -82,6 +83,7 @@ export default function CommandMap() {
     },
     {
       id: 'train-01',
+      asset_id: 'Train-01',
       name: 'Intermodal DFC Freight Train (Offline Fallback)',
       type: 'Freight Train',
       latitude: 18.9650,
@@ -93,6 +95,7 @@ export default function CommandMap() {
     },
     {
       id: 'truck-01',
+      asset_id: 'Truck-01',
       name: 'Logistics Haulage Truck (Offline Fallback)',
       type: 'Haulage Truck',
       latitude: 18.9380,
@@ -113,19 +116,23 @@ export default function CommandMap() {
         }
         const data = await response.json();
         if (Array.isArray(data)) {
-          setAssets(data);
+          setLiveAssets(data);
           setIsLive(true);
         } else {
           throw new Error('Invalid telemetry payload format');
         }
       } catch (error) {
-        setAssets(fallbackAssets);
+        setLiveAssets(fallbackAssets);
         setIsLive(false);
       }
     };
 
+    // Initial fetch on mount
     fetchTelemetry();
-    const intervalId = setInterval(fetchTelemetry, 4000);
+
+    // 3-second continuous polling interval loop
+    const intervalId = setInterval(fetchTelemetry, 3000);
+
     return () => clearInterval(intervalId);
   }, []);
 
@@ -178,7 +185,7 @@ export default function CommandMap() {
             display: 'inline-block',
             boxShadow: isLive ? '0 0 8px #22c55e' : '0 0 8px #ef4444'
           }}></span>
-          {isLive ? 'FastAPI Telemetry Stream: Connected (Live)' : 'FastAPI Stream Offline - Running Safe Fallback State'}
+          {isLive ? 'FastAPI Telemetry Stream: Connected (Live - 3s interval)' : 'FastAPI Stream Offline - Running Safe Fallback State'}
         </span>
         
         {/* Stage 2 Simulation Crisis Toggle Button */}
@@ -214,6 +221,8 @@ export default function CommandMap() {
         />
 
         {/* --- SPATIAL OVERLAYS --- */}
+
+        {/* 1. JNPT Coastal Berth Zone Polygon */}
         <Polygon 
           positions={berthZoneCoords}
           pathOptions={{
@@ -236,6 +245,7 @@ export default function CommandMap() {
           </Popup>
         </Polygon>
 
+        {/* 2. Yard Storage Hotspots (Sectors A, B, C with pulsing red congestion toggle) */}
         <Polygon 
           positions={yardSectorACoords}
           pathOptions={{ color: '#10b981', weight: 1, fillColor: '#10b981', fillOpacity: 0.2 }}
@@ -288,6 +298,7 @@ export default function CommandMap() {
           </Popup>
         </Polygon>
 
+        {/* 3. Intermodal Evacuation Route (Dedicated Freight Corridor Polyline) */}
         <Polyline 
           positions={dfcRailRouteCoords}
           pathOptions={{
@@ -307,15 +318,15 @@ export default function CommandMap() {
           </Popup>
         </Polyline>
 
-        {/* --- LIVE ASSET MARKERS WITH CUSTOM SVG ICONS --- */}
-        {assets.map((asset) => {
+        {/* --- LIVE ASSET MARKERS MAPPED FROM liveAssets STATE --- */}
+        {liveAssets.map((asset) => {
           const lat = asset.latitude ?? (asset.coordinates ? asset.coordinates[0] : jnptCoords[0]);
           const lng = asset.longitude ?? (asset.coordinates ? asset.coordinates[1] : jnptCoords[1]);
           const position = [lat, lng];
           const markerIcon = getIconForAsset(asset);
 
           return (
-            <Marker key={asset.id || asset.name} position={position} icon={markerIcon}>
+            <Marker key={asset.id || asset.asset_id || asset.name} position={position} icon={markerIcon}>
               <Popup className="cyber-popup">
                 <div style={styles.popupContent}>
                   <div style={styles.popupHeader}>
