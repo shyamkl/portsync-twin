@@ -11,31 +11,50 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.7.1/images/marker-shadow.png',
 });
 
-// Custom SVG Icons styled for cyber dark-mode aesthetic
-const createCustomIcon = (color) => {
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${color}" width="32" height="32" style="filter: drop-shadow(0 0 6px ${color});">
-      <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
-    </svg>
-  `;
+// Helper to wrap SVG into a high-performance Leaflet DivIcon with cyber glow
+const createCyberIcon = (svgContent, color) => {
   return L.divIcon({
-    className: 'custom-leaflet-marker',
-    html: svg,
-    iconSize: [32, 32],
-    iconAnchor: [16, 32],
-    popupAnchor: [0, -32],
+    className: 'custom-cyber-marker',
+    html: `<div style="display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; background: rgba(11, 15, 25, 0.95); border: 2px solid ${color}; border-radius: 50%; box-shadow: 0 0 12px ${color};">
+      ${svgContent}
+    </div>`,
+    iconSize: [36, 36],
+    iconAnchor: [18, 18],
+    popupAnchor: [0, -18],
   });
 };
 
-const vesselIcon = createCustomIcon('#00f0ff');  // Neon Cyan
-const trainIcon = createCustomIcon('#ff0055');   // Cyber Pink/Red
-const truckIcon = createCustomIcon('#39ff14');   // Neon Green
+// Distinct, professional vector SVG silhouettes for Vessels, Trains, and Trucks
+const vesselSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00f0ff" width="20" height="20"><path d="M20 21c-1.39 0-2.78-.47-4-1.32-2.44 1.71-5.56 1.71-8 0C6.78 20.53 5.39 21 4 21H2v2h2c1.38 0 2.74-.35 4-.99 2.52 1.29 5.48 1.29 8 0 1.26.64 2.62.99 4 .99h2v-2h-2zM3.95 19H4c1.6 0 3.02-.88 4-2 .98 1.12 2.4 2 4 2s3.02-.88 4-2c.98 1.12 2.4 2 4 2h.05l1.89-6.68c.08-.26.16-.54.16-.82C22 9.5 20.5 8 18.5 8H17V6c0-1.1-.9-2-2-2H9c-1.1 0-2 .9-2 2v2H5.5C3.5 8 2 9.5 2 11.5c0 .28.08.56.16.82L3.95 19zM9 6h6v2H9V6z"/></svg>`;
 
-const getIconForType = (type) => {
-  if (!type) return vesselIcon;
-  const lower = type.toLowerCase();
-  if (lower.includes('train') || lower.includes('dfc')) return trainIcon;
-  if (lower.includes('truck') || lower.includes('haulage')) return truckIcon;
+const trainSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#ff0055" width="20" height="20"><path d="M12 2c-4 0-8 .5-8 4v9.5C4 17.43 5.57 19 7.5 19L6 20.5v.5h12v-.5L16.5 19c1.93 0 3.5-1.57 3.5-3.5V6c0-3.5-4-4-8-4zM7.5 17c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm3.5-7H6V7h5v3zm2 0V7h5v3h-5zm3.5 7c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5s-.67 1.5-1.5 1.5zM18 11H6V6h12v5z"/></svg>`;
+
+const truckSvg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#39ff14" width="20" height="20"><path d="M20 8h-3V4H3c-1.1 0-2 .9-2 2v11h2c0 1.66 1.34 3 3 3s3-1.34 3-3h6c0 1.66 1.34 3 3 3s3-1.34 3-3h2v-5l-3-4zM6 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zm13.5-9l1.96 2.62H17V9.5h2.5zM17 18.5c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"/></svg>`;
+
+const vesselIcon = createCyberIcon(vesselSvg, '#00f0ff');  // Neon Cyan
+const trainIcon = createCyberIcon(trainSvg, '#ff0055');    // Cyber Pink/Red
+const truckIcon = createCyberIcon(truckSvg, '#39ff14');    // Neon Green
+
+// Robust helper function inspecting ID, status, and type for accurate asset mapping
+const getIconForAsset = (asset) => {
+  const idStr = (asset.id || asset.asset_id || '').toLowerCase();
+  const statusStr = (asset.status || '').toLowerCase();
+  const typeStr = (asset.type || '').toLowerCase();
+
+  if (
+    idStr.includes('train') || idStr.includes('rail') ||
+    statusStr.includes('train') || statusStr.includes('rail') || statusStr.includes('dfc') ||
+    typeStr.includes('train') || typeStr.includes('rail') || typeStr.includes('dfc')
+  ) {
+    return trainIcon;
+  }
+  if (
+    idStr.includes('truck') || idStr.includes('haulage') ||
+    statusStr.includes('truck') || statusStr.includes('haulage') || statusStr.includes('gate') || statusStr.includes('trailer') ||
+    typeStr.includes('truck') || typeStr.includes('haulage')
+  ) {
+    return truckIcon;
+  }
   return vesselIcon;
 };
 
@@ -111,7 +130,6 @@ export default function CommandMap() {
   }, []);
 
   // Spatial Overlay Coordinates
-  // 1. Terminal Berth Zone Polygon (Coastal Edge near JNPT)
   const berthZoneCoords = [
     [18.9620, 72.9280],
     [18.9600, 72.9330],
@@ -119,7 +137,6 @@ export default function CommandMap() {
     [18.9500, 72.9250]
   ];
 
-  // 2. Yard Storage Hotspots (Sectors A, B, C)
   const yardSectorACoords = [
     [18.9540, 72.9360],
     [18.9540, 72.9420],
@@ -141,7 +158,6 @@ export default function CommandMap() {
     [18.9400, 72.9360]
   ];
 
-  // 3. Intermodal Evacuation Route (Dedicated Freight Corridor rail route extending inland)
   const dfcRailRouteCoords = [
     [18.9420, 72.9380],
     [18.9500, 72.9550],
@@ -198,8 +214,6 @@ export default function CommandMap() {
         />
 
         {/* --- SPATIAL OVERLAYS --- */}
-
-        {/* 1. Terminal Berth Zone Overlay */}
         <Polygon 
           positions={berthZoneCoords}
           pathOptions={{
@@ -222,7 +236,6 @@ export default function CommandMap() {
           </Popup>
         </Polygon>
 
-        {/* 2. Yard Storage Hotspot Zone Overlays */}
         <Polygon 
           positions={yardSectorACoords}
           pathOptions={{ color: '#10b981', weight: 1, fillColor: '#10b981', fillOpacity: 0.2 }}
@@ -249,7 +262,6 @@ export default function CommandMap() {
           </Popup>
         </Polygon>
 
-        {/* Yard Sector C with Dynamic Crisis Bottleneck Toggle */}
         <Polygon 
           positions={yardSectorCCoords}
           pathOptions={{ 
@@ -276,7 +288,6 @@ export default function CommandMap() {
           </Popup>
         </Polygon>
 
-        {/* 3. Intermodal Evacuation Route (DFC Rail Corridor) */}
         <Polyline 
           positions={dfcRailRouteCoords}
           pathOptions={{
@@ -296,12 +307,12 @@ export default function CommandMap() {
           </Popup>
         </Polyline>
 
-        {/* --- LIVE ASSET MARKERS --- */}
+        {/* --- LIVE ASSET MARKERS WITH CUSTOM SVG ICONS --- */}
         {assets.map((asset) => {
           const lat = asset.latitude ?? (asset.coordinates ? asset.coordinates[0] : jnptCoords[0]);
           const lng = asset.longitude ?? (asset.coordinates ? asset.coordinates[1] : jnptCoords[1]);
           const position = [lat, lng];
-          const markerIcon = getIconForType(asset.type);
+          const markerIcon = getIconForAsset(asset);
 
           return (
             <Marker key={asset.id || asset.name} position={position} icon={markerIcon}>
@@ -358,7 +369,7 @@ export default function CommandMap() {
         .leaflet-container {
           font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        .custom-leaflet-marker {
+        .custom-cyber-marker {
           background: transparent;
           border: none;
         }
